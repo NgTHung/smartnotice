@@ -1,0 +1,39 @@
+[project]
+name = "smartnotice"
+version = "0.1.0"
+description = "Prepare Vietnamese academic notices for event and audience annotation."
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "beautifulsoup4>=4.13,<5",
+  "httpx>=0.28,<1",
+  "pandas>=2.2,<4",
+  "pydantic>=2.11,<3",
+]
+
+[project.scripts]
+smartnotice = "smartnotice.cli:main"
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["smartnotice", "smartnotice.collectors", "smartnotice.parsers", "smartnotice.preprocessing", "smartnotice.labeling"]
+package-dir = {smartnotice = "src"}
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+notebooks = ["ipykernel>=6,<8", "jupyterlab>=4,<5", "matplotlib>=3.9,<4", "nbclient>=0.10,<1", "nbformat>=5.10,<6"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["reports/generated", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

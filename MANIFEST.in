@@ -1,0 +1,8 @@
+include .python-version uv.lock WRITING_GUIDE.md AGENTS.md
+recursive-include docs *.md *.pdf
+recursive-include tools *.py
+recursive-include notebooks *.ipynb
+recursive-include data/raw/examples *.md *.eml *.html *.json *.jsonl
+recursive-include data/annotations/examples *.jsonl
+include data/annotations/README.md data/annotations/label_studio.xml
+recursive-include reports *.md

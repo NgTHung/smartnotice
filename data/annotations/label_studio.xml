@@ -1,0 +1,22 @@
+<View>
+  <Header value="Select exact spans, then draw ACTION-to-argument relations."/>
+  <Header value="Reference date: $reference_date"/>
+  <Labels name="entities" toName="notice">
+    <Label value="ACTION" background="#FFB74D"/>
+    <Label value="TIME" background="#64B5F6"/>
+    <Label value="AUDIENCE" background="#81C784"/>
+    <Label value="CONDITION" background="#CE93D8"/>
+    <Label value="CHANNEL" background="#4DD0E1"/>
+    <Label value="DOCUMENT" background="#FFF176"/>
+  </Labels>
+  <Relations>
+    <Relation value="START"/>
+    <Relation value="DEADLINE"/>
+    <Relation value="EVENT_TIME"/>
+    <Relation value="AUDIENCE"/>
+    <Relation value="CONDITION"/>
+    <Relation value="CHANNEL"/>
+    <Relation value="DOCUMENT"/>
+  </Relations>
+  <Text name="notice" value="$text"/>
+</View>

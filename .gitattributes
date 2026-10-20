@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.pdf -text
+data/raw/examples/*.eml -text
+data/raw/examples/*.html -text
