@@ -17,7 +17,7 @@ The [dated implementation plan](docs/project-plan-2026-10-20.md) separates the d
 
 ## Academic integrity
 
-- Cite papers, datasets, checkpoints, and adapted methods. Identify externally adapted code and respect its license. Machine learning libraries are permitted; the Itemset reference's Julia-only and from-scratch mining restrictions do not apply.
+- Cite papers, datasets, checkpoints, and adapted methods. Identify externally adapted code and respect its license. Use machine learning libraries when appropriate and document their role in the method.
 - Keep submitted code readable enough for team members to explain at the oral defense. Use terminology from the event and applicability contracts.
 - Distinguish synthetic fixtures, rule-derived silver labels, independent human annotations, and model predictions in every reported result.
 - Report only measurements produced by a recorded run. Passing tests or a synthetic demo does not establish model quality, human agreement, collection coverage, or anonymity.
@@ -104,18 +104,13 @@ For a performance or quality claim, record the corpus/split version, sample coun
 
 ## Documentation and comments
 
-Read [WRITING_GUIDE.md](docs/WRITING_GUIDE.md) before editing Markdown, comments, or docstrings. Apply its style rules using SmartNotice's paths and terminology. Itemset APIs, Julia commands, SPMF, Colab, and `DAT-*` examples describe another project. They do not introduce requirements or a tracking system here.
+Read the [SmartNotice writing guide](docs/WRITING_GUIDE.md) before editing Markdown, notebook narratives, comments, or docstrings. It owns document types, fact ownership, prose style, examples, evidence claims, Python documentation style, and Vietnamese scientific report conventions.
 
-- Open documents with the problem and their purpose. Write present-tense reference material in short, active sentences; keep status and history in actual issues, commits, or dated records.
-- Give facts one owning document and link to it. The course requirements, data contract, collection/annotation procedures, and evaluation protocol own their respective rules; the README owns user setup and run commands.
-- Explain constraints and reasons. Avoid unsupported adjectives, em dashes, ASCII/Mermaid diagrams, and bold or italic in running prose.
-- Document public functions and types with short docstrings directly above them. State input/output guarantees, offset or date units, edge cases, and relevant exceptions. Include a call example or signature when the calling convention needs it.
-- Comments explain a non-obvious decision, constraint, or recovery strategy. Cite the source section when implementing a paper-specific method. Remove comments that narrate code, refactor history, task IDs, placeholder promises, or section dividers.
-- Scientific report prose under `reports/` uses Vietnamese with English technical terms explained on first use. Caption and reference figures/tables, define formula variables, and cite evidence. Follow the course brief for submission requirements.
+Document public functions and classes with a docstring as the first statement in their body. State the caller's guarantees, units, edge cases, and relevant exceptions, and keep them consistent with the implementation and data contract. The writing guide owns wording and examples; this file owns development and verification requirements.
 
 ## Tracking and Git
 
-Use [GitHub issues and the SmartNotice Project](docs/collaboration.md) for task scope and progress. If a task names an issue, read it before working and preserve its acceptance criteria. Do not invent a Linear project, issue ID, team owner, or completed human review. The [dated plan](docs/project-plan-2026-10-20.md) records setup intent; verify later state in the code and real tracking records.
+Use [GitHub issues and the SmartNotice Project](docs/collaboration.md) for task scope and progress. If a task names an issue, read it before working and preserve its acceptance criteria. Use real issue IDs and team-supplied ownership, and record human reviews only when they occur. The [dated plan](docs/project-plan-2026-10-20.md) records setup intent; verify later state in the code and actual tracking records.
 
 Changes to `main` go through pull requests. The [collaboration workflow](docs/collaboration.md) owns the branch protection policy. This project uses local verification without CI or required status checks; report the relevant checks in each pull request.
 
