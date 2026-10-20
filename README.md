@@ -14,7 +14,7 @@ uv run ruff check .
 uv run python tools/run_notebooks.py
 ```
 
-`uv` selects Python from `.python-version` and installs the dependencies recorded in `uv.lock`. The demo reads synthetic Vietnamese notices from `data/raw/examples/`. Its corpus counts exercise the workflow; they do not measure model quality or real collection progress.
+The demo reads synthetic Vietnamese notices from `data/raw/examples/`. Its corpus counts exercise the workflow; they do not measure model quality or real collection progress.
 
 Open the three notebooks with:
 
