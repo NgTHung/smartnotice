@@ -1,4 +1,4 @@
-include .python-version uv.lock WRITING_GUIDE.md AGENTS.md
+include .python-version uv.lock docs/WRITING_GUIDE.md AGENTS.md
 recursive-include docs *.md *.pdf
 recursive-include tools *.py
 recursive-include notebooks *.ipynb

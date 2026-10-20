@@ -66,11 +66,12 @@ The installed Python package is `smartnotice`. The package mapping in `pyproject
 
 ## Read the contracts and evidence
 
+- [GitHub Project](https://github.com/users/NgTHung/projects/2) and [collaboration workflow](docs/collaboration.md)
 - [Data and annotation contract](docs/interface.md)
 - [Course requirements](docs/assignment.md) and [original source documents](docs/reference/)
 - [Evaluation protocol](docs/evaluation.md)
 - [Dated implementation plan](docs/project-plan-2026-10-20.md)
 - [Validation record](reports/validation-2026-10-20.md)
-- [Writing guide](WRITING_GUIDE.md)
+- [Writing guide](docs/WRITING_GUIDE.md)
 
 Team names, student IDs, and submission URLs belong in the submission materials. No team identity or public deployment URL is supplied with this workspace.

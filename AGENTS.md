@@ -104,7 +104,7 @@ For a performance or quality claim, record the corpus/split version, sample coun
 
 ## Documentation and comments
 
-Read [WRITING_GUIDE.md](WRITING_GUIDE.md) before editing Markdown, comments, or docstrings. Apply its style rules using SmartNotice's paths and terminology. Itemset APIs, Julia commands, SPMF, Colab, and `DAT-*` examples describe another project. They do not introduce requirements or a tracking system here.
+Read [WRITING_GUIDE.md](docs/WRITING_GUIDE.md) before editing Markdown, comments, or docstrings. Apply its style rules using SmartNotice's paths and terminology. Itemset APIs, Julia commands, SPMF, Colab, and `DAT-*` examples describe another project. They do not introduce requirements or a tracking system here.
 
 - Open documents with the problem and their purpose. Write present-tense reference material in short, active sentences; keep status and history in actual issues, commits, or dated records.
 - Give facts one owning document and link to it. The course requirements, data contract, collection/annotation procedures, and evaluation protocol own their respective rules; the README owns user setup and run commands.
@@ -115,6 +115,8 @@ Read [WRITING_GUIDE.md](WRITING_GUIDE.md) before editing Markdown, comments, or 
 
 ## Tracking and Git
 
-Use the repository's actual issues and remotes. If a task names an issue, read it before working and preserve its acceptance criteria. Do not invent a Linear project, issue ID, team owner, or completed human review. The [dated plan](docs/project-plan-2026-10-20.md) records setup intent; verify later state in the code and real tracking records.
+Use [GitHub issues and the SmartNotice Project](docs/collaboration.md) for task scope and progress. If a task names an issue, read it before working and preserve its acceptance criteria. Do not invent a Linear project, issue ID, team owner, or completed human review. The [dated plan](docs/project-plan-2026-10-20.md) records setup intent; verify later state in the code and real tracking records.
+
+Changes to `main` go through pull requests. The [collaboration workflow](docs/collaboration.md) owns the branch protection policy. This project uses local verification without CI or required status checks; report the relevant checks in each pull request.
 
 When branching or committing, use descriptive task branches and small Conventional Commits such as `fix: preserve table date evidence` or `docs: clarify annotation review`. Reference real issues when supplied. Preserve unrelated user edits and inspect the staged diff before a commit or push.
