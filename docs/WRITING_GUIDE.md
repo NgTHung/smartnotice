@@ -1,115 +1,118 @@
-# Writing Guide
+# SmartNotice writing guide
 
-This guide covers Itemset documentation, docstrings, and code comments. It does not cover the Vietnamese report in `docs/report/`, which follows the course brief in `docs/assignment.md`. Each document answers one reader question. You decide which question before you write, and the answer decides what belongs on the page and what goes somewhere else.
+SmartNotice contributors explain how Vietnamese notices become traceable documents, annotations, and research evidence. This guide keeps documentation, notebook narratives, Python docstrings, and code comments consistent so readers can run the workflow and assess its claims.
 
-## Start with the problem
+## Start with the reader's problem
 
-Open with the problem the thing solves, then describe how it solves it. Do not open with project status, task IDs, or what changed recently.
-
-The opening paragraph is two to four sentences. It says what the thing is, who uses it, and which problem it removes for them.
+Decide which reader question the document answers before writing. Open with two to four sentences that identify the problem, the intended reader, and how the documented component helps. Describe the component's purpose before listing its files or implementation details.
 
 Weak opening:
 
-> This is the project setup, not a completed miner. `mine` deliberately fails until DAT-8 is implemented.
+> This module contains several data processing utilities for the course project.
 
-Strong opening:
+Useful opening:
 
-> `ItemsetMining` finds every frequent itemset in a transaction database with Eclat. The market basket and image-pattern applications call one function, `mine`, so both mine with the same validated code and compare results on equal terms.
+> `smartnotice prepare` converts email and HTML snapshots into redacted documents with sentence offsets. Annotators use those documents to connect each event and argument to its supporting text.
 
-## Pick the document type
+## Choose the document type
 
-Each type has one job. Status, history, and plans belong in the types built for them.
+Each document has one job. Keep plans, procedures, and observations in their respective homes.
 
-| Type | Answers | Contains | Never contains |
-|---|---|---|---|
-| Root README | What is Itemset and how do I run it? | Purpose, team, layout, install and run commands, Colab and data links, latest dated test output | Task IDs, open-work lists, change history |
-| Contract (`docs/interface.md`) | What must every caller and variant rely on? | Present-tense rules for input, thresholds, and output, with the reason for each rule | Review status, task progress, "will" statements |
-| Protocol (`experiments/README.md`, `tools/spmf/README.md`) | How is evidence produced so others can repeat it? | Steps, recorded fields, timing boundaries, tools and versions | Results, owner progress |
-| Owner brief (`applications/*/README.md`) | What must this workstream deliver? | Scope, inputs, deliverables, owner, reviewer, linked Linear issues | Results, contract rules copied from `interface.md` |
-| Dated record (`docs/setup-validation.md`, `docs/project-plan.md`) | What did we find or intend on a given date? | Date, environment, commands, measurements, task IDs | Edits that track later state |
-| Docstring | How do I call this and what does it guarantee? | Signature, contract, edge cases, what throws | Task IDs, implementation history |
-| Linear issue | What work remains and when is it done? | Scope, criteria, status | Nothing restricted |
+| Type and example | Reader question | Content |
+|---|---|---|
+| Root [README](../README.md) | What does SmartNotice do, and how do I run it? | Purpose, layout, uv setup, working commands, and links to contracts and evidence |
+| [Data contract](interface.md) | What can producers and consumers rely on? | Present-tense input/output rules, offsets, provenance, validation, and reasons |
+| [Collection](collection.md), [annotation](annotation.md), or [evaluation](evaluation.md) protocol | How do I produce repeatable evidence? | Steps, tools, recorded fields, versions, review requirements, and measurement boundaries |
+| [Collaboration protocol](collaboration.md) | How does work reach the shared branch? | Project fields, issue workflow, branch rules, and local verification policy |
+| [Dated plan](project-plan-2026-10-20.md) or [validation record](../reports/validation-2026-10-20.md) | What did we intend or observe on a given date? | Date, scope, environment, commands, observations, limitations, and real issue links |
+| [Analysis notebooks](../notebooks/) | What does this corpus show? | Dataset identity, reproducible analysis, tables/figures, interpretations, and limitations |
+| Scientific report, using the [report outline](../reports/report-outline.md) | How does the evidence answer the research questions? | Methods, measured results, error analysis, citations, and submission material |
+| Public Python docstring | How do I call this, and what does it guarantee? | Inputs, returns, units, edge cases, and relevant exceptions |
+| GitHub issue or pull request | What work is required, or what behavior does this change deliver? | Acceptance criteria and progress for issues; resulting behavior and validation for pull requests |
 
-Status lives in Linear. Other documents link there instead of restating it. When a dated record goes stale, write a new dated section or file instead of editing the old one.
+Reference documents omit task progress and change history. Protocols define how to obtain results; dated records and research reports contain the observations. The [GitHub Project and issues](collaboration.md) own current task status. Link to them instead of copying status into READMEs or contracts.
 
-## Describe what is, not what changed
+## Describe verifiable behavior
 
-Contracts, protocols, READMEs, and docstrings describe the current system in the present tense. Ask of each sentence: will this still be true, and still worth reading, after the next merge? If not, it belongs in a commit message, a Linear issue, or a dated record.
+Use the present tense for implemented behavior. Inspect the owning code before describing a function, CLI option, file format, model, or application feature. Keep proposals in actual issues and dated plans, and link to them when explaining scope.
 
-Drop these words from those documents: now, still, currently, yet, until, no longer, at this stage, has been, was removed, former, legacy, new.
-
-| Instead of | Write |
+| Avoid | Write |
 |---|---|
-| Today both variants raise an explicit unimplemented error. | Both variants return the same `SupportMap` for the same input. |
-| The notebook now targets Colab's native Julia kernel. | The notebook runs on Colab's native Julia kernel. |
+| The parser now handles tables correctly. | `parse_html` converts table rows into header-value lines so date values retain their column context. |
+| The system anonymizes every notice. | The privacy filter masks configured identifier patterns and supplied names; each prepared notice requires human privacy review. |
+| The demo proves extraction quality. | The synthetic demo checks the data workflow. Model evaluation follows the evaluation protocol. |
 
-If a feature is missing, the reference doc omits it and the Linear issue tracks it. Do not describe planned behavior as if it exists.
+Keep temporary phrases such as "now", "still", "yet", "no longer", and "until" out of reference prose. Do not hide a known limitation: describe its observable effect and the caller's required action. Record later measurements in a new dated section or file rather than rewriting an earlier observation.
 
-## Explain why before what
+## Explain reasons and evidence
 
-Readers can read the code for what it does. Give them the reason the code cannot give: the constraint, the cost, or the failure it prevents.
+Explain the constraint, cost, or failure a decision addresses. A reader can inspect the code for the sequence of operations.
 
-Weak: `support_threshold` parses `minsup` as a `BigFloat`.
-Strong: `support_threshold` parses the decimal text of `minsup`, because `0.07 * 100` is `7.000000000000001` in `Float64` and would raise the threshold from 7 to 8 transactions.
+Weak: `normalize_and_redact` runs before `segment_sentences`.
 
-Put numbers behind performance and reliability claims. "Mines Chess at minsup 0.6 in N s with M MB peak RSS", with the measured values filled in, is useful. "Fast and memory efficient" is not. Every number names its dataset, threshold, variant, machine, and Julia version, or links to the raw run in `results/raw/`.
+Useful: Normalize and redact before segmentation so sentence offsets refer to the text that annotators receive. Changing that text after annotation invalidates its offsets.
 
-## Keep one home per fact
+Name the evidence behind a quality or performance claim. Include the dataset version, source mix, sample size, split/grouping settings, parameters, seeds, software environment, hardware when relevant, and measurement procedure, or link to a record containing them. The [evaluation protocol](evaluation.md) owns metric definitions and experiment requirements.
 
-Each fact has one owning document. Other documents link to it.
+Distinguish synthetic software fixtures, rule-derived silver labels, independent human annotations, and model predictions. State which category supports each table or conclusion. Test counts do not measure model quality, and agreement requires independent annotations on aligned decisions. Give metric denominators and separate measured outcomes from collection targets or planned experiments.
 
-- The course requirements live in `docs/assignment.md`.
-- The transaction, threshold, and output contract lives in `docs/interface.md` and the `mine` docstring.
-- The benchmark measurement protocol lives in `experiments/README.md`, and the CSV fields in `experiments/result-fields.txt`.
-- The SPMF reference procedure lives in `tools/spmf/README.md`.
-- The fixed seed lives in `DEFAULT_SEED` in `src/structures.jl`.
-- Install and run commands live in the root README.
-- Task status and ownership live in Linear.
+## Give each fact one home
 
-Before you add a paragraph, search for the fact. If it exists, link to it or move it.
+Before adding a paragraph, search for the fact and link to its owner if it exists.
 
-## Structure
+| Fact | Owner |
+|---|---|
+| Course deliverables and proposal targets | [docs/assignment.md](assignment.md) and its linked original PDFs |
+| Persisted fields and validation rules | [docs/interface.md](interface.md) and [src/schemas.py](../src/schemas.py) |
+| Collection and annotation procedures | [docs/collection.md](collection.md) and [docs/annotation.md](annotation.md) |
+| Evaluation methods and experiment provenance | [docs/evaluation.md](evaluation.md) |
+| Install, run, and user workflow entry points | [README.md](../README.md), with detailed annotation steps in their protocol |
+| Development commands, architecture, and verification scope | [AGENTS.md](../AGENTS.md) |
+| Default split seed | `DEFAULT_SEED` in [src/preprocessing/split.py](../src/preprocessing/split.py) |
+| Task status, milestones, and collaboration rules | GitHub issues/Project, linked from [docs/collaboration.md](collaboration.md) |
+| Dated observations and scientific report structure | [reports/](../reports/) and its [README](../reports/README.md) |
 
-Use headings that match the reader's task, such as "Install and verify" or "Compare with SPMF". Keep titles short.
+Keep units, thresholds, and labels consistent with their contract. Preserve field names and categorical values such as `doc_id`, `DEADLINE`, and `UNCLEAR` in code formatting. Do not translate serialized labels in examples or silently replace an unknown value with a guess.
 
-Use prose for reasoning and cause and effect. Use lists for parallel, discrete items such as options, commands, or recorded fields. A list item that needs a "because" clause belongs in prose.
+## Use structure that helps the task
 
-Use a table when the reader compares items across the same attributes, such as datasets or variants.
+Use short headings such as "Review source text", "Validate annotations", or "Compare sources". Use prose for reasoning, lists for discrete steps or options, and tables for comparisons across the same attributes. Avoid section headings that merely announce background or conclusions without naming the reader's task.
 
-Use a code example when it replaces a paragraph of explanation. Examples in Markdown show the smallest call that works, and every command runs from the repository root.
+Show the smallest working example that replaces an explanation. Commands run from the repository root and use `uv` for Python tools. Link to the README's setup sequence instead of duplicating it. Relative Markdown links resolve from the file containing them; command paths resolve from the repository root.
 
-Do not use ASCII or Mermaid diagrams. Do not use bold or italic in running prose.
+Keep the root README around 120 lines and subsystem READMEs under 60 lines where practical. Move extended procedures into their owning document under `docs/`. Avoid ASCII or Mermaid diagrams and bold or italic in running prose.
 
-## Length
+## Write short, direct sentences
 
-A root README fits on about two screens, around 120 lines, because the brief requires it to carry setup, usage, test output, and submission links. Other READMEs stay under 60 lines. If a section explains a subsystem in more than five paragraphs, it deserves its own document under `docs/`.
+Use active voice and address the reader as "you". Prefer concrete actions and examples over adjectives about quality. Preserve Vietnamese diacritics in source phrases, labels shown to readers, and examples.
 
-## Sentences
+Avoid em dashes, metaphors, filler introductions, emojis, hashtags, and "not only X, but also Y" constructions. Remove adjectives such as fast, robust, powerful, or seamless unless a measurement supports the specific claim.
 
-Write short sentences in active voice. Address the reader as "you". State facts plainly and let data carry the weight.
+Avoid these words and their relatives: comprehensive, delve, utilize, harness, realm, tapestry, unlock, revolutionary, groundbreaking, remarkable, pivotal. Keep terminology consistent instead of replacing a technical term with synonyms for variety.
 
-Avoid these constructions:
+## Document Python behavior
 
-- Em dashes. Use commas or periods.
-- "Not only X, but also Y".
-- Metaphors and clichés.
-- Generalizations without an example or a number.
-- Setup phrases such as "in conclusion" or "it is worth noting".
-- Adjectives and adverbs that add no fact, such as fast, simple, clean, robust, powerful, or seamless, unless you measure them.
-- Emojis and hashtags.
+Follow the public API coverage rules in [AGENTS.md](../AGENTS.md). Put a short docstring as the first statement in a public function or class body. State the caller's contract: accepted inputs, return values, units, missing-value behavior, and relevant exceptions. Explain non-obvious keyword arguments or use a minimal call example when needed.
 
-Avoid these words and their relatives: comprehensive, delve, utilize, harness, realm, tapestry, unlock, revolutionary, groundbreaking, remarkable, pivotal.
+For text APIs, identify which text offsets refer to and their indexing convention. For date helpers, distinguish explicit, inferred, and unresolved values. Link detailed schema rules to their owner instead of reproducing the schema in every docstring.
 
-## Code comments
+Inline comments explain why a decision is necessary or how recovery works. Cite the paper section or equation when implementing a specific published method. Remove comments that repeat code, divide sections, promise later cleanup, narrate refactor history, or carry task IDs. Markdown is useful in rendered docstrings; decorative formatting does not belong in plain comments.
 
-Docstrings and comments follow the documentation rules in `AGENTS.md`. They explain why, stay short, and never narrate refactor history or cite task IDs.
+## Write reports and notebook interpretations
 
-## Review checklist
+Scientific reports under `reports/` use Vietnamese prose. Explain English technical terms on first use, retain serialized field/label names, caption and reference every figure or table, define formula variables, and cite source material. Follow the [course requirements](assignment.md) and [report outline](../reports/report-outline.md) for submission structure.
 
-Before you commit a document, check that:
+In notebooks, identify the dataset and its synthetic/research status before interpreting outputs. Name axes and units, state the population or subset behind an aggregate, and distinguish a surface-form count from extraction accuracy. Tie conclusions to saved outputs and describe limitations with their practical effect.
 
-1. The first paragraph states the problem and fits in four sentences.
-2. The document matches one type in the table and contains nothing from its "Never contains" column.
-3. No sentence depends on "now", "until", or a task ID to make sense, unless the document is a dated record or an owner brief.
-4. Every performance or reliability claim has a number or a link to a raw run.
-5. Every fact that exists elsewhere is a link, not a copy.
+Use invented notices or privacy-reviewed text for examples. Keep source notebooks output-free and link to the notebook execution procedure in AGENTS.md. Generated local reports and notebook copies need privacy review before sharing; an ignored file or automatic redaction flag does not establish that its content is safe to publish.
+
+## Review before handing off
+
+1. Does the opening state the reader's problem and the document's purpose?
+2. Does each section belong to the chosen document type and its owning topic?
+3. Do claims describe inspected behavior or clearly identified plans, with limitations preserved?
+4. Do measurements name their dataset, label origin, sample size, and repeatable evidence?
+5. Do examples, labels, paths, and commands match the code and use uv where appropriate?
+6. Do local links resolve, and does each shared fact link to its owner?
+7. Are examples privacy-reviewed and synthetic material identified?
+8. Does `git diff --check` pass? For documentation-only changes, validate links and examples without rerunning unrelated runtime tests.
