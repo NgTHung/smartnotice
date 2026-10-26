@@ -26,6 +26,16 @@ TIME arguments require START, DEADLINE, or EVENT_TIME. They may carry `normalize
 
 Audience constraints contain inclusion lists for cohorts, majors, programs, and statuses, an excluded-status list, and an implicit-audience flag. Inclusion attributes combine with AND, values inside an attribute combine with OR, and separate audience branches combine with OR. Encode common exclusions in every branch. Curators resolve abbreviations to shared codes; the matcher only normalizes case and whitespace. Unrepresented conditions require manual review.
 
+## Keep model suggestions and human reviews traceable
+
+The LLM draft schema in `src/labeling/llm.py` contains quoted spans and events. A span specifies `span_id`, label, `sentence_id`, exact text, and an optional zero-based occurrence number. Python resolves the quote inside that sentence to canonical offsets. Missing quotes, ambiguous repeated quotes, invalid links, unsupported roles, duplicate IDs, and unlinked spans fail validation. Each ACTION has exactly one event; arguments may be shared. Empty span/event arrays represent a model prediction of no events, which also needs human checking.
+
+`suggest-labels` writes Label Studio task JSON containing `data`, `data.proposal`, and `predictions`. `ProposalProvenance` in `src/schemas.py` owns the versioned run metadata: provider/model, run ID/time, prompt version/hash, text/source hashes, prediction hash, synthetic flag, temperature, and output-token limit. Predictions are distinct from canonical Annotation JSONL. Failures follow `LabelingFailure` and contain a document ID, provider/model, attempt time, and safe reason. Failed records cannot become review predictions.
+
+Real notices require a `ProviderApproval` JSONL row matching the prepared-text hash, document ID, provider, recorded reviewer/time, privacy clearance, and provider-use permission. The prepared privacy flag does not satisfy this requirement. The [LLM review procedure](llm-labeling.md) owns the approval and provider configuration steps.
+
+`import-reviewed-labels` compares a human Label Studio export with the original prediction task file and current Notice text. Each exported task needs exactly one completed or canceled annotation and an identifiable pseudonymous/numeric reviewer. Successful imports produce canonical annotations plus `ReviewRecord` JSONL rows. Decisions distinguish matching content (`accepted`), valid differences (`edited`), and cancellation (`skipped`). Records bind the source text, original prediction, run ID, and final annotation hash. Skipped tasks produce no annotation. This exchange records assisted review; it does not establish independent human agreement or adjudication.
+
 ## Derive applicability rows
 
 Synthetic profiles contain a profile ID plus optional cohort, major, program, and status. The rule matcher returns NOT_APPLIES for a known exclusion or mismatch, UNCLEAR for implicit/unspecified audiences or missing required profile attributes, and APPLIES when every explicit requirement matches. Absence of a reviewed constraint produces UNCLEAR.

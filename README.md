@@ -44,6 +44,14 @@ The URL above illustrates the command syntax. Choose a verified public notice an
 
 Import the exported tasks and `data/annotations/label_studio.xml` into your Label Studio instance. Follow the [annotation protocol](docs/annotation.md) to convert completed annotations, review date normalization, and derive applicability labels. Raw sources and generated corpus files are excluded from Git. Review redacted text for remaining personal information before sharing it.
 
+To pre-label a synthetic notice with your configured Gemini or Featherless model:
+
+```powershell
+uv run smartnotice suggest-labels --notices data/interim/demo/notices.jsonl --doc-id 0d497e6fefde3daed7eb --provider gemini --output data/annotations/review_tasks.json
+```
+
+Run the demo first to prepare that fixture. The [LLM labeling procedure](docs/llm-labeling.md) explains `.env` configuration, batch selection, real-data approval, Label Studio review, and verified import with `import-reviewed-labels`.
+
 ## Find the files
 
 | Path | Purpose |

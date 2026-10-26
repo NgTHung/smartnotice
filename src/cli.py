@@ -6,13 +6,21 @@ import sys
 from pathlib import Path
 
 import httpx
+from pydantic import ValidationError
 from smartnotice.collectors.local import collect_email, save_source
 from smartnotice.collectors.web import WebCollector
 from smartnotice.demo import run_demo
 from smartnotice.io import read_jsonl, write_jsonl
+from smartnotice.labeling.llm import require_provider_approval
 from smartnotice.labeling.pairs import build_pairs
-from smartnotice.labeling.studio import export_tasks, import_tasks
+from smartnotice.labeling.providers import configured_model, load_local_env
+from smartnotice.labeling.studio import (
+    export_tasks,
+    import_reviewed_tasks,
+    import_tasks,
+)
 from smartnotice.labeling.validation import validate_annotation
+from smartnotice.labeling.workflow import suggest_tasks
 from smartnotice.preprocessing.pipeline import prepare
 from smartnotice.preprocessing.split import DEFAULT_SEED, split_documents
 from smartnotice.quality import quality_summary
@@ -52,6 +60,29 @@ def main(argv: list[str] | None = None) -> None:
     prep = commands.add_parser("prepare", help="Parse, redact, and segment a manifest")
     prep.add_argument("--manifest", type=Path, default=Path("data/raw/manifest.jsonl"))
     prep.add_argument("--output", type=Path, default=Path("data/interim/notices.jsonl"))
+    suggest = commands.add_parser("suggest-labels", help="Draft review tasks with an LLM")
+    suggest.add_argument("--notices", type=Path, default=Path("data/interim/notices.jsonl"))
+    suggest.add_argument(
+        "--doc-id", action="append", help="Select an ID; repeat for several notices"
+    )
+    suggest.add_argument("--provider", choices=["gemini", "featherless"], required=True)
+    suggest.add_argument("--model", help="Override GEMINI_MODEL or FEATHERLESS_MODEL")
+    suggest.add_argument(
+        "--approvals", type=Path, default=Path("data/annotations/provider_approvals.jsonl")
+    )
+    suggest.add_argument("--output", type=Path, required=True)
+    suggest.add_argument("--errors-output", type=Path, help="Default: OUTPUT.errors.jsonl")
+    suggest.add_argument(
+        "--dry-run", action="store_true", help="Validate selection without API calls"
+    )
+    reviewed = commands.add_parser(
+        "import-reviewed-labels", help="Import human-checked predictions and a review log"
+    )
+    reviewed.add_argument("--notices", type=Path, default=Path("data/interim/notices.jsonl"))
+    reviewed.add_argument("--input", type=Path, required=True)
+    reviewed.add_argument("--predictions", type=Path, required=True, help="Original saved tasks")
+    reviewed.add_argument("--output", type=Path, required=True)
+    reviewed.add_argument("--review-log", type=Path, required=True)
     for name in [
         "split",
         "quality",
@@ -112,6 +143,57 @@ def main(argv: list[str] | None = None) -> None:
             print(row["path"])
         elif args.command == "prepare":
             print(f"Prepared {len(prepare(args.manifest, args.output))} notices: {args.output}")
+        elif args.command == "suggest-labels":
+            errors_output = args.errors_output or args.output.with_suffix(".errors.jsonl")
+            if (
+                args.output.resolve() == errors_output.resolve()
+                or args.output.exists()
+                or errors_output.exists()
+            ):
+                raise ValueError("Prediction and error outputs must be distinct new files")
+            notices = _load(args.notices, Notice)
+            if len({n.doc_id for n in notices}) != len(notices):
+                raise ValueError("Notice document IDs must be unique")
+            requested = set(args.doc_id or [n.doc_id for n in notices])
+            selected = [notice for notice in notices if notice.doc_id in requested]
+            if not selected or requested != {n.doc_id for n in selected}:
+                raise ValueError("Selection contains no notices or unknown document IDs")
+            approvals = read_jsonl(args.approvals) if args.approvals.exists() else []
+            for notice in selected:
+                require_provider_approval(notice, args.provider, approvals)
+            load_local_env()
+            model = args.model or configured_model(args.provider)
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {"provider": args.provider, "model": model, "doc_ids": sorted(requested)}
+                    )
+                )
+                return
+            tasks, failures = suggest_tasks(
+                selected, provider=args.provider, model=model, approvals=approvals
+            )
+            _json(args.output, tasks)
+            write_jsonl(errors_output, failures)
+            print(f"Wrote {len(tasks)} predictions and {len(failures)} failures: {args.output}")
+            if failures:
+                parser.exit(1, f"smartnotice: review failed attempts in {errors_output}\n")
+        elif args.command == "import-reviewed-labels":
+            if (
+                args.output.resolve() == args.review_log.resolve()
+                or args.output.exists()
+                or args.review_log.exists()
+            ):
+                raise ValueError("Review outputs must be distinct new files")
+            notices = _load(args.notices, Notice)
+            tasks = json.loads(args.input.read_text(encoding="utf-8-sig"))
+            predictions = json.loads(args.predictions.read_text(encoding="utf-8-sig"))
+            annotations, reviews = import_reviewed_tasks(tasks, notices, predictions)
+            write_jsonl(args.output, [a.model_dump(mode="json") for a in annotations])
+            write_jsonl(args.review_log, reviews)
+            print(
+                f"Imported {len(annotations)} reviewed annotations; logged {len(reviews)} decisions"
+            )
         else:
             notices = _load(args.notices, Notice)
             if args.command == "split":
@@ -136,5 +218,7 @@ def main(argv: list[str] | None = None) -> None:
                 else:
                     profiles = _load(args.profiles, Profile)
                     write_jsonl(args.output, build_pairs(notices, annotations, profiles))
+    except ValidationError:
+        parser.exit(1, "smartnotice: schema validation failed; inspect the input locally\n")
     except (ValueError, KeyError, OSError, httpx.HTTPError) as exc:
         parser.exit(1, f"smartnotice: {exc}\n")
