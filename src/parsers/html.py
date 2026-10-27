@@ -3,7 +3,7 @@
 from bs4 import BeautifulSoup
 
 
-def parse_html(html: str, selector: str | None = None) -> str:
+def parse_html(html: str | bytes, selector: str | None = None) -> str:
     """Extract a selected body, preserving table rows as readable lines.
 
     Use a source-specific CSS selector to exclude navigation. Missing selectors
@@ -13,7 +13,7 @@ def parse_html(html: str, selector: str | None = None) -> str:
     root = soup.select_one(selector) if selector else soup.body or soup
     if root is None:
         raise ValueError(f"HTML selector did not match: {selector}")
-    for tag in root.select("script, style, noscript, nav, footer, header"):
+    for tag in root.select("script, style, noscript, nav, footer, header, .post-views"):
         tag.decompose()
     for table in list(root.find_all("table")):
         lines = []

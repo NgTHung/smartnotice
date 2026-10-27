@@ -78,3 +78,11 @@ def test_nfc_redaction_precedes_exact_sentence_offsets():
 )
 def test_numeric_date_normalization(value, reference, expected, inferred):
     assert normalize_date(value, reference) == (expected, inferred)
+
+
+def test_html_excludes_view_counter_inside_article():
+    raw = (
+        "<article><p>Sinh viên đăng ký trước 30/10.</p>"
+        "<div class='post-views'><span>Post Views:</span><span>728</span></div></article>"
+    )
+    assert parse_html(raw, "article") == "Sinh viên đăng ký trước 30/10."

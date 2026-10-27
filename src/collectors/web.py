@@ -1,5 +1,6 @@
 """Fetch explicit URLs with robots checks and a per-origin request interval."""
 
+import math
 import time
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
@@ -10,15 +11,25 @@ USER_AGENT = "SmartNoticeCoursework/0.1"
 MAX_BYTES = 5 * 1024 * 1024
 
 
+class CollectionPolicyError(ValueError):
+    """Stop collection when robots or redirect scope forbids a request."""
+
+
+class UnsupportedContentError(ValueError):
+    """Reject a successful response whose media type is not HTML."""
+
+
 class WebCollector:
     """Apply robots rules before each page, including redirected destinations.
 
     Collection stops on unavailable robots rules except a 404 response. The
-    larger of the configured interval and Crawl-delay separates all requests.
+    largest of the configured interval, Crawl-delay and Request-rate spacing
+    separates all requests.
     """
 
-    def __init__(self, client: httpx.Client, interval: float = 2.0):
-        if interval < 1:
+    def __init__(self, client: httpx.Client, interval: float = 2.0) -> None:
+        """Borrow a client and require a finite request interval of at least one second."""
+        if not math.isfinite(interval) or interval < 1:
             raise ValueError("The request interval must be at least one second")
         self.client = client
         self.interval = interval
@@ -28,10 +39,25 @@ class WebCollector:
 
     @staticmethod
     def origin(url: str) -> str:
+        """Return a normalized HTTP(S) origin, rejecting credentials and invalid ports."""
         parsed = urlsplit(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username:
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
             raise ValueError("Use a public HTTP(S) URL without embedded credentials")
-        return f"{parsed.scheme}://{parsed.netloc}"
+        port = parsed.port
+        host = parsed.hostname.lower()
+        if ":" in host:
+            host = f"[{host}]"
+        suffix = (
+            f":{port}"
+            if port is not None and port != {"http": 80, "https": 443}[parsed.scheme]
+            else ""
+        )
+        return f"{parsed.scheme}://{host}{suffix}"
 
     def _get(self, url: str) -> httpx.Response:
         origin = self.origin(url)
@@ -47,9 +73,13 @@ class WebCollector:
                 if size > MAX_BYTES:
                     raise ValueError(f"Response exceeds {MAX_BYTES} bytes: {url}")
                 chunks.append(chunk)
+            # iter_bytes has decoded the body; retaining compression headers decodes it twice.
+            headers = response.headers.copy()
+            for name in ("content-encoding", "content-length", "transfer-encoding"):
+                headers.pop(name, None)
             return httpx.Response(
                 response.status_code,
-                headers=response.headers,
+                headers=headers,
                 content=b"".join(chunks),
                 request=response.request,
             )
@@ -72,11 +102,18 @@ class WebCollector:
             rate_delay = rate.seconds / rate.requests if rate and rate.requests else 0
             self.delays[origin] = max(self.interval, crawl_delay, rate_delay)
         if not self.rules[origin].can_fetch(USER_AGENT, url):
-            raise ValueError(f"robots.txt disallows collection: {url}")
+            raise CollectionPolicyError(f"robots.txt disallows collection: {url}")
 
-    def fetch(self, url: str) -> tuple[bytes, str]:
-        """Return HTML bytes and the final URL after at most five redirects."""
+    def fetch(self, url: str, *, allowed_origin: str | None = None) -> tuple[bytes, str]:
+        """Return decoded HTML bytes and the URL after at most five redirects.
+
+        When supplied, allowed_origin is checked before any request, including
+        destination robots requests. Policy failures raise CollectionPolicyError;
+        non-HTML responses raise UnsupportedContentError. HTTP errors propagate.
+        """
         for _ in range(6):
+            if allowed_origin is not None and self.origin(url) != self.origin(allowed_origin):
+                raise CollectionPolicyError("Redirect or URL leaves the configured source origin")
             self._allowed(url)
             response = self._get(url)
             if response.is_redirect:
@@ -86,7 +123,8 @@ class WebCollector:
                 url = urljoin(url, location)
                 continue
             response.raise_for_status()
-            if "html" not in response.headers.get("content-type", "").lower():
-                raise ValueError("The web collector accepts HTML pages only")
+            media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            if media_type not in {"text/html", "application/xhtml+xml"}:
+                raise UnsupportedContentError("The web collector accepts HTML pages only")
             return response.content, url
         raise ValueError("Too many redirects")

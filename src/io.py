@@ -19,9 +19,13 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    """Write complete records, creating the destination directory."""
+    """Serialize records before atomically replacing a single-writer UTF-8 file.
+
+    Create the destination directory. A failed write/replace preserves an existing
+    file and may leave a sibling .tmp file for inspection. Calls are not concurrent.
+    """
+    text = "".join(json.dumps(row, ensure_ascii=False, default=str) + "\n" for row in rows)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "".join(json.dumps(row, ensure_ascii=False, default=str) + "\n" for row in rows),
-        encoding="utf-8",
-    )
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)
