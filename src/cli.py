@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import httpx
+from smartnotice.collectors.crawl import crawl_web, validate_run_id
 from smartnotice.collectors.local import collect_email, save_source
 from smartnotice.collectors.web import WebCollector
 from smartnotice.demo import run_demo
@@ -49,6 +50,16 @@ def main(argv: list[str] | None = None) -> None:
     web.add_argument("--domain-holdout", action="store_true")
     web.add_argument("--interval", type=float, default=2.0)
     web.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
+    crawl = commands.add_parser("crawl-web", help="Discover and collect a bounded HCMUS pilot")
+    crawl.add_argument("--source", choices=["hcmus-student"], default="hcmus-student")
+    crawl.add_argument("--run-id", required=True, help="New run folder name; letters/digits/_/-")
+    crawl.add_argument("--output-root", type=Path, default=Path("data/raw/crawls"))
+    crawl.add_argument("--limit", type=int, default=10)
+    crawl.add_argument("--max-candidates", type=int, default=40)
+    crawl.add_argument("--min-chars", type=int, default=100, help="Flag shorter text for review")
+    crawl.add_argument("--interval", type=float, default=2.0, help="Seconds between requests, >=1")
+    crawl.add_argument("--domain-holdout", action="store_true")
+    crawl.add_argument("--group-id")
     prep = commands.add_parser("prepare", help="Parse, redact, and segment a manifest")
     prep.add_argument("--manifest", type=Path, default=Path("data/raw/manifest.jsonl"))
     prep.add_argument("--output", type=Path, default=Path("data/interim/notices.jsonl"))
@@ -110,6 +121,23 @@ def main(argv: list[str] | None = None) -> None:
                 domain_holdout=args.domain_holdout,
             )
             print(row["path"])
+        elif args.command == "crawl-web":
+            run_id = validate_run_id(args.run_id)
+            with httpx.Client(timeout=30) as client:
+                result = crawl_web(
+                    WebCollector(client, args.interval),
+                    args.output_root / run_id,
+                    limit=args.limit,
+                    max_candidates=args.max_candidates,
+                    min_chars=args.min_chars,
+                    domain_holdout=args.domain_holdout,
+                    group_id=args.group_id,
+                )
+            print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+            if not result.complete:
+                parser.exit(
+                    2, "smartnotice: candidate budget exhausted before reaching the target\n"
+                )
         elif args.command == "prepare":
             print(f"Prepared {len(prepare(args.manifest, args.output))} notices: {args.output}")
         else:
@@ -136,5 +164,9 @@ def main(argv: list[str] | None = None) -> None:
                 else:
                     profiles = _load(args.profiles, Profile)
                     write_jsonl(args.output, build_pairs(notices, annotations, profiles))
+    except KeyboardInterrupt:
+        parser.exit(
+            130, "smartnotice: interrupted; inspect the run directory before starting again\n"
+        )
     except (ValueError, KeyError, OSError, httpx.HTTPError) as exc:
         parser.exit(1, f"smartnotice: {exc}\n")
