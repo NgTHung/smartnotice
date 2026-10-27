@@ -40,7 +40,22 @@ uv run smartnotice quality
 uv run smartnotice export-tasks
 ```
 
-The URL above illustrates the command syntax. Choose a verified public notice and its actual selector before collection. The collector fetches explicit URLs; it does not discover links.
+The URL above illustrates the command syntax. Choose a verified public notice and its actual selector before collection. `collect-web` fetches an explicit URL.
+
+Discover and collect a pilot from the HCMUS student listing:
+
+```powershell
+uv run smartnotice crawl-web --source hcmus-student --limit 10 --max-candidates 40 --run-id hcmus-pilot-001
+```
+
+Choose a new `--run-id` for every run. Outputs live under `data/raw/crawls/<run-id>/`: inspect `summary.json`, `index.jsonl`, `crawl_log.jsonl`, and `prepared/notices.jsonl`. Exit codes are 0 for the collection target reached, 2 for too few usable candidates, 1 for failure, and 130 for interruption. Invalid CLI syntax also exits 2 before a run starts. Completion does not certify human review. The [collection protocol](docs/collection.md) explains source selection, pending dates, recovery, and privacy review; the [crawler reference](docs/crawler.md) explains implementation and limitations.
+
+After creating a reviewed manifest as described in that protocol, prepare and export its notices with explicit run paths:
+
+```powershell
+uv run smartnotice prepare --manifest data/raw/crawls/hcmus-pilot-001/raw/manifest-reviewed.jsonl --output data/raw/crawls/hcmus-pilot-001/prepared/notices-reviewed.jsonl
+uv run smartnotice export-tasks --notices data/raw/crawls/hcmus-pilot-001/prepared/notices-reviewed.jsonl --output data/raw/crawls/hcmus-pilot-001/label-studio-tasks.json
+```
 
 Import the exported tasks and `data/annotations/label_studio.xml` into your Label Studio instance. Follow the [annotation protocol](docs/annotation.md) to convert completed annotations, review date normalization, and derive applicability labels. Raw sources and generated corpus files are excluded from Git. Review redacted text for remaining personal information before sharing it.
 
@@ -52,7 +67,7 @@ Import the exported tasks and `data/annotations/label_studio.xml` into your Labe
 | `data/interim/` | Redacted notices, reference dates, and sentence offsets |
 | `data/processed/` | Grouped split assignments and silver applicability pairs |
 | `data/annotations/` | Label Studio configuration and canonical annotation examples |
-| `src/collectors/` | Consented local email import and robots-aware HTML collection |
+| `src/collectors/` | Consented email import, robots-aware HTTP, and bounded HCMUS discovery |
 | `src/parsers/` | MIME body extraction and HTML table conversion |
 | `src/preprocessing/` | Privacy filtering, segmentation, date helpers, and grouped splitting |
 | `src/labeling/` | Annotation validation, Label Studio exchange, and audience rules |

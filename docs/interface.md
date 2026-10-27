@@ -12,6 +12,25 @@ A prepared Notice contains the SHA-256 of the source bytes, a `doc_id` from its 
 
 `reference_date` comes from the email Date header or a manually verified web publication date. Collection time is not a substitute. Missing or invalid email dates remain null. Numeric dates without years can borrow the reference year and are marked inferred; relative expressions require annotation review. The date helper does not infer a year rollover.
 
+## Trace a crawler run
+
+`crawl-web` writes a separate run directory; its `raw/manifest.jsonl` uses the existing manifest and Notice formats. Automatic collection leaves web `reference_date=null`. Displayed publication evidence is stored separately for human verification. UTF-8 JSONL writers serialize before replacing their destination through a sibling temporary file; this protects a previous file from a failed replacement, but does not make several files transactional.
+
+| Record/file | Persisted fields and meaning |
+|---|---|
+| `CrawlCandidate`, `candidates.jsonl` | `url`, `title`, `selection_reason`; unique links in listing order, including title exclusions |
+| `CrawlIndex`, `index.jsonl` | `doc_id`, `raw_sha256`, `requested_url`, final `url`, article/listing titles, `institution`, `raw_path`, `snapshot_path`, `selector`, `characters`, and `prepared_text_sha256` |
+| Index date evidence | `publication_date_candidate`, `publication_date_display`, `published_time_metadata`, `publication_date_status`, `reference_date`, and `date_review_required` |
+| Index review metadata | `privacy_review_required`, `content_review_required`, and `warnings`; automated output leaves all review requirements true |
+| `CrawlLog`, `crawl_log.jsonl` | `kind` (`listing`, `detail`, `preparation`), requested/final URLs, `status` (`fetched`, `accepted`, `skipped`, `failed`), `reason`, optional snapshot path, accepted `doc_id`, or `duplicate_of` |
+| `CrawlSummary`, `summary.json` | Run ID/source/listing, UTC start/finish times, status/completion, target, candidate budget, request interval, short-text threshold, holdout flag, discovered/eligible/attempted/accepted counts, unique-text and pending-review counts, outcome counts, and optional error |
+
+All crawler models reject unknown fields. Paths in the index/log resolve relative to the run directory. `raw_sha256` hashes HTTP-decoded HTML bytes; the prepared-text hash covers NFC-normalized, automatically redacted UTF-8 text. `doc_id` retains the existing first-20-hex source-hash rule. Deduplication counts identical prepared text once within a run while preserving other downloaded URL outcomes in the log. Missing detail snapshots for HTTP errors or non-HTML responses are expected.
+
+Publication statuses are `unverified`, `missing`, `invalid`, and `conflict`. A candidate can remain present alongside invalid/conflicting metadata; it is never promoted automatically to `reference_date`. The [collection protocol](collection.md) owns manual review and regeneration.
+
+Run statuses are `running`, `complete`, `partial`, `failed`, and `interrupted`. `complete=true` requires both the target count and successful preparation. It makes no claim about human approvals. A failure can leave selected raw sources without prepared output, or stale counts after a storage/process failure. See the [crawler reference](crawler.md) for the exact failure policy.
+
 ## Keep offsets stable
 
 Offsets are zero-based, end-exclusive Python Unicode code point indices. `text[start:end]` must equal the stored sentence or span text. Normalize Unicode to NFC, redact identifiers, and segment before exporting annotation tasks. These offsets refer to the prepared text, not raw MIME bytes or DOM positions. The raw hash and manifest preserve source provenance.
