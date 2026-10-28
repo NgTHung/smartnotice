@@ -1,6 +1,6 @@
 """Own the document and annotation contracts used by every pipeline stage."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 SpanLabel = Literal["ACTION", "TIME", "AUDIENCE", "CONDITION", "CHANNEL", "DOCUMENT"]
 TimeRole = Literal["START", "DEADLINE", "EVENT_TIME"]
 Applicability = Literal["APPLIES", "NOT_APPLIES", "UNCLEAR"]
+Provider = Literal["gemini", "featherless"]
 
 
 class Record(BaseModel):
@@ -92,3 +93,59 @@ class Profile(Record):
     major: str | None = None
     program: str | None = None
     status: str | None = None
+
+
+class ProviderApproval(Record):
+    """Record human clearance for one exact prepared text and named providers."""
+
+    doc_id: str
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reviewer_id: str = Field(min_length=1)
+    reviewed_at: datetime
+    providers: list[Provider] = Field(min_length=1)
+    privacy_cleared: bool
+    provider_use_approved: bool
+
+
+class ProposalProvenance(Record):
+    """Identify the source snapshot, prompt, parameters, and model suggestion."""
+
+    schema_version: Literal[1] = 1
+    run_id: str
+    created_at: datetime
+    provider: Provider
+    model: str
+    prompt_version: str
+    prompt_sha256: str
+    text_sha256: str
+    raw_sha256: str
+    prediction_sha256: str
+    synthetic: bool
+    temperature: float
+    max_output_tokens: int
+
+
+class ReviewRecord(Record):
+    """Link an exported annotator decision to its original model suggestion."""
+
+    doc_id: str
+    run_id: str
+    reviewer_id: str
+    imported_at: datetime
+    decision: Literal["accepted", "edited", "skipped"]
+    provider: Provider
+    model: str
+    text_sha256: str
+    prediction_sha256: str
+    annotation_sha256: str | None = None
+    synthetic: bool
+
+
+class LabelingFailure(Record):
+    """Record one failed labeling attempt without source text or response bodies."""
+
+    doc_id: str
+    provider: Provider
+    model: str
+    failed_at: datetime
+    reason: str

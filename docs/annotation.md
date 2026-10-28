@@ -14,6 +14,8 @@ The [data contract](interface.md) owns schema rules. The [course requirements](a
 
 ## Convert and curate
 
+For model-assisted labeling, follow [Review LLM event suggestions](llm-labeling.md). It covers Gemini/Featherless configuration, privacy approval, prediction export, and `import-reviewed-labels`, which binds a human completion to its original prediction file and writes a review ledger. Use ordinary unlabeled tasks for independent annotation. Keep assisted reviews identified in research evidence.
+
 ```powershell
 uv run smartnotice import-labels --input data/annotations/label_studio_export.json --output data/annotations/imported.jsonl
 uv run smartnotice validate-labels --annotations data/annotations/imported.jsonl
