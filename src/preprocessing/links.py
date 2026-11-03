@@ -1,7 +1,6 @@
 """Extract ordered web links; adapted from the supplied Data Email/content_processor.py."""
 
 import re
-from html import unescape
 from urllib.parse import urlsplit
 
 WEB_LINK = re.compile(r"(?:https?://|www\.)[^\s<>\"“”‘’`]+", re.I)
@@ -10,7 +9,8 @@ WEB_LINK = re.compile(r"(?:https?://|www\.)[^\s<>\"“”‘’`]+", re.I)
 def extract_links(text: str, *, keep_in_text: bool = False) -> tuple[str, list[str]]:
     """Return text and distinct HTTP(S)/www links in first-appearance order.
 
-    Normalize folded/HTML-escaped URLs before privacy filtering. With
+    Accept plain text or text already decoded by the HTML parser. Unfold URLs
+    without HTML entity decoding, which belongs exclusively to that parser. With
     keep_in_text=True, retain normalized URLs as annotation evidence. Otherwise
     preserve the original cleaner's separation behavior. Labels always remain.
     This helper does not certify URL safety or fetch any link.
@@ -46,9 +46,6 @@ def extract_links(text: str, *, keep_in_text: bool = False) -> tuple[str, list[s
         if emphasis and raw.endswith(emphasis[1]):
             raw = raw[: -len(emphasis[1])]
         url = raw
-        # Finish decoding before privacy filtering; a later pass must not reveal a token key.
-        while (decoded := unescape(url)) != url:
-            url = decoded
         try:
             parsed = urlsplit("https://" + url if url.lower().startswith("www.") else url)
             if (

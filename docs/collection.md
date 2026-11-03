@@ -42,7 +42,9 @@ The exact patterns and domain sets live in [`privacy.py`](../src/preprocessing/p
 
 The local audit scans headers and decoded bodies, including quotes but excluding MIME attachments. It deduplicates identical raw sources, counts documents containing each address, includes configured public contacts absent from the corpus with a zero count, and reports parser failures by source hash. CSV rows retain addresses, decision reasons, and `review_required=true`; keep the whole report private. The audit does not import email, grant consent, or add candidates to `public_emails` automatically.
 
-MIME decoding, normalization and footer handling were adapted from the supplied `Data Email/clean_emails.py`; thread, URL and privacy rules came from `Data Email/content_processor.py`. Regression cases were adapted from its three test modules using synthetic inputs. SmartNotice retains its source hashes, dates, one-notice-per-source contract, and annotation offsets. The old standalone `from/content/attachments` CSV exporter and recovered-quote records are not pipeline outputs. The integration keeps class codes and meaningful symbols because they can express applicability conditions.
+The email-cleaning implementation is the work of the SmartNotice team.
+
+MIME decoding, footer handling, and normalization are implemented in [`mime.py`](../src/parsers/mime.py), [`boilerplate.py`](../src/parsers/boilerplate.py), and [`text.py`](../src/preprocessing/text.py). Thread separation, URL handling, and privacy filtering are implemented in [`thread.py`](../src/parsers/thread.py), [`links.py`](../src/preprocessing/links.py), and [`privacy.py`](../src/preprocessing/privacy.py). Their regression tests use synthetic inputs in [`tests/`](../tests/). The [data contract](interface.md) defines source provenance, dates, document boundaries, and annotation offsets.
 
 ## Record evidence
 

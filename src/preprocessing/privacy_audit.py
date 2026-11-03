@@ -10,29 +10,21 @@ from email.parser import BytesParser
 from importlib.metadata import version
 from pathlib import Path
 from platform import python_version
-from urllib.parse import parse_qsl, unquote, urlsplit
 
 from smartnotice.collectors.local import discover_email_files
+from smartnotice.parsers.addresses import find_email_addresses, normalize_email
 from smartnotice.parsers.mime import extract_content
-from smartnotice.parsers.thread import EMAIL
 from smartnotice.preprocessing.links import extract_links
 from smartnotice.preprocessing.privacy import load_privacy_rules
+from smartnotice.preprocessing.urls import inspect_url
 
 
 def _body_addresses(body: str) -> set[str]:
     text, links = extract_links(body)
-    values = [text]
+    addresses = {email.address for email in find_email_addresses(text)}
     for link in links:
-        url = urlsplit("https://" + link if link.lower().startswith("www.") else link)
-        values.extend(unquote(url.path).split("/"))
-        values.extend(value for _, value in parse_qsl(url.query, keep_blank_values=True))
-        if "=" in url.fragment:
-            values.extend(value for _, value in parse_qsl(url.fragment, keep_blank_values=True))
-        else:
-            values.append(unquote(url.fragment))
-        if url.username:
-            values.append(unquote(url.username))
-    return {match.group().casefold() for value in values for match in EMAIL.finditer(value)}
+        addresses.update(inspect_url(link).addresses)
+    return addresses
 
 
 def audit_email_policy(
@@ -62,17 +54,16 @@ def audit_email_policy(
         for key in ("From", "To", "Cc", "Bcc", "Reply-To"):
             for header in mail.get_all(key, []):
                 addresses.update(
-                    address.addr_spec.casefold()
+                    normalize_email(address.addr_spec)
                     for address in getattr(header, "addresses", ())
                     if address.username and address.domain
                 )
         warnings: list[str] = []
         try:
-            body = extract_content(mail, warnings)
+            body = extract_content(mail, warnings, include_email_quotes=True)
+            addresses.update(_body_addresses(body))
         except (ValueError, LookupError, UnicodeError):
             failed_hashes.append(digest)
-        else:
-            addresses.update(_body_addresses(body))
         warning_counts.update(set(warnings))
         counts.update(addresses)
 
@@ -111,7 +102,9 @@ def audit_email_policy(
                 "parsers/mime.py",
                 "parsers/html.py",
                 "parsers/thread.py",
+                "parsers/addresses.py",
                 "preprocessing/links.py",
+                "preprocessing/urls.py",
                 "preprocessing/text.py",
                 "collectors/local.py",
             ]

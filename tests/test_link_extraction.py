@@ -1,6 +1,7 @@
 """URL cases adapted from Data Email/test_link_extraction.py, with evidence retained."""
 
 import pytest
+from smartnotice.parsers.html import parse_html
 from smartnotice.preprocessing.links import extract_links
 from smartnotice.preprocessing.privacy import PrivacyRules
 from smartnotice.preprocessing.text import normalize_and_redact
@@ -41,7 +42,9 @@ def test_normalized_links_remain_as_evidence(text, expected):
             "www.example.invalid/apply?email=REDACTED&event=2026",
         ),
         (
-            "<https://example.invalid/apply?event=2026&amp;token=secret>",
+            parse_html(
+                '<a href="https://example.invalid/apply?event=2026&amp;token=secret">Link</a>'
+            ),
             "https://example.invalid/apply?event=2026&token=REDACTED",
         ),
         (
@@ -67,9 +70,12 @@ def test_malformed_url_omitted_and_no_links_is_empty():
 
 def test_nested_html_entities_cannot_expose_query_after_redaction():
     text, _ = extract_links(
-        "<https://example.invalid/apply?event=2026&amp;amp;token=secret>", keep_in_text=True
+        parse_html(
+            '<a href="https://example.invalid/apply?event=2026&amp;amp;token=secret">Link</a>'
+        ),
+        keep_in_text=True,
     )
     text, _ = normalize_and_redact(text)
     text, links = extract_links(text, keep_in_text=True)
-    assert links == ["https://example.invalid/apply?event=2026&token=REDACTED"]
+    assert links == ["https://example.invalid/apply?event=2026&amp;token=REDACTED"]
     assert "secret" not in text

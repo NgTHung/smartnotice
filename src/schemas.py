@@ -23,6 +23,15 @@ class Sentence(Record):
     text: str
 
 
+class PreparationFailure(Record):
+    """Identify one rejected source using safe manifest and source references."""
+
+    manifest_line: int = Field(ge=1)
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    raw_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: Literal["empty_notice_body", "email_parse_failed", "web_parse_failed"]
+
+
 class Notice(Record):
     """A prepared source with exact evidence offsets and redacted URL copies."""
 

@@ -50,6 +50,8 @@ Preparation retains redacted URLs in `text` and copies them to `attachments`. To
 uv run smartnotice prepare --privacy-rules data/raw/privacy_rules.json
 ```
 
+To keep valid notices when a source is empty or cannot be parsed, add `--errors-output data/interim/preparation_errors.jsonl`. The command writes safe source references for review, reports both counts, and exits nonzero when sources fail. The [data contract](docs/interface.md#trace-a-document) defines failure codes and which errors stop the batch.
+
 The default masks all email addresses except explicit `public_emails`. Add `--email-policy legacy` only to reproduce the supplied cleaner's domain/local-part rules. The [collection protocol](docs/collection.md#review-email-retention) describes their precedence and review limits. To list addresses those old rules would retain without importing the corpus:
 
 ```powershell

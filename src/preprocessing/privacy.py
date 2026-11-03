@@ -6,12 +6,13 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import date
 from pathlib import Path
 from typing import Literal
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from smartnotice.parsers.thread import EMAIL
+from smartnotice.parsers.addresses import find_email_addresses, normalize_email
+from smartnotice.preprocessing.links import WEB_LINK
+from smartnotice.preprocessing.urls import inspect_url
 
 DEFAULT_STUDENT_DOMAINS = {"student.hcmus.edu.vn", "sv.hcmus.edu.vn", "clc.fitus.edu.vn"}
 
@@ -34,12 +35,13 @@ GROUP_LOCAL = re.compile(r"^(?:\d{2}(?:clc|c)\d{2}|tcta[_-]?2k\d{2})(?:[+].*)?$"
 UPPER = "A-ZÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ"
 
 
-NAME_WORD = "[" + UPPER + r"][^\W\d_]+"
+NAME_WORD = "[" + UPPER + r"][^\W\d_]*"
 
 
 INTRO_NAME = re.compile(
     r"(?i:\b(?:em|tôi|mình)\s+(?:tên(?:\s+là)?|là(?:\s+sinh\s+viên)?)\s+"
-    r"|\b(?:họ\s+(?:và\s+)?tên|tên\s+sinh\s+viên)\s*[:：]\s*)"
+    r"|\b(?:họ\s+(?:và\s+)?tên|tên\s+sinh\s+viên)\s*[:：]\s*"
+    r"|\bsinh\s+viên\s*[:：]?\s+)"
     r"(?P<name>" + NAME_WORD + r"(?:[ \t]+" + NAME_WORD + r"){1,6})"
 )
 
@@ -48,6 +50,12 @@ STUDENT_ID = re.compile(r"(?<!\w)[12]\d{7}(?!\w)")
 
 
 MOBILE = re.compile(r"(?<![\w/])(?:\+?84[ .()-]*|0)[35789](?:[ .()-]*\d){8}(?!\d)")
+
+CALENDAR_DATE = re.compile(r"(?<!\d)(\d{1,2})([/.-])(\d{1,2})\2(\d{4})(?!\d)")
+DATE_CONTEXT = re.compile(
+    r"(?i)\b(?:ngày(?:\s+thông\s+báo)?|hạn(?:\s+(?:nộp|chót|đăng\s+ký))?"
+    r"|thời\s+gian|deadline|date)\s*[:：]?\s*$"
+)
 
 
 PRIVATE_URL_KEYS = {
@@ -123,8 +131,8 @@ class PrivacyRules:
             getattr(rules, key).update(
                 unicodedata.normalize("NFC", item.strip()) for item in values
             )
-        rules.student_emails = {email.casefold() for email in rules.student_emails}
-        rules.public_emails = {email.casefold() for email in rules.public_emails}
+        rules.student_emails = {normalize_email(email) for email in rules.student_emails}
+        rules.public_emails = {normalize_email(email) for email in rules.public_emails}
         rules.student_domains = {domain.casefold() for domain in rules.student_domains}
         return rules
 
@@ -134,7 +142,7 @@ class PrivacyRules:
 
     def email_decision(self, address: str) -> tuple[bool, str]:
         """Return (allowed, reason code) in the original rule precedence order."""
-        address = address.casefold()
+        address = normalize_email(address)
         if address in self.public_emails:
             return True, "explicit_public"
         if address in self.student_emails:
@@ -159,9 +167,10 @@ class PrivacyRules:
         sources unless its changing identity set is intentionally part of a run.
         """
         identity_rules = replace(self, email_policy="legacy")
+        text = unicodedata.normalize("NFC", text)
         for address, display_name in headers:
             if identity_rules.is_private_email(address):
-                self.student_emails.add(address.casefold())
+                self.student_emails.add(normalize_email(address))
                 name = re.sub(r"[\d()\[\]]", "", display_name).replace(",", " ")
                 name = unicodedata.normalize("NFC", " ".join(name.split()))
                 if re.fullmatch(NAME_WORD + r"(?:\s+" + NAME_WORD + r"){1,6}", name):
@@ -178,47 +187,76 @@ class PrivacyRules:
         return address
 
     def redact(self, text: str, stats: Counter) -> str:
-        """Mask known identifiers and sensitive URL query values, counting edits.
+        """Return NFC text with identifiers and sensitive URL values masked.
 
-        Unrestricted names and URL paths/fragments still need human review.
-        Run URL unfolding first so encoded/folded queries cannot skip filtering.
+        Count replacements in stats. Only explicit calendar context protects
+        compact dates from the generic eight-digit ID rule; labeled IDs and
+        birthdates remain private. URL inspection shares the audit's bounded
+        component decoding. Unsafe/private path or fragment URLs become
+        [REDACTED_URL]. Unrestricted names still require human review.
         """
-
-        def replace_email(match: re.Match) -> str:
-            if self.is_private_email(match.group()):
-                stats["email_redacted"] += 1
-                return "[EMAIL]"
-            return match.group()
+        text = unicodedata.normalize("NFC", text)
 
         def replace_url(match: re.Match) -> str:
             raw = match.group()
             try:
-                prefix = "https://" if raw.lower().startswith("www.") else ""
-                url = urlsplit(prefix + raw)
+                inspected = inspect_url(raw)
+                if any(self.is_private_email(address) for address in inspected.outside_query):
+                    stats["url_redacted"] += 1
+                    return "[REDACTED_URL]"
                 pairs = []
                 changed = False
-                for key, value in parse_qsl(url.query, keep_blank_values=True):
+                for pair in inspected.query:
+                    if any(
+                        self.is_private_email(email.address)
+                        for email in find_email_addresses(pair.key)
+                    ):
+                        stats["url_redacted"] += 1
+                        return "[REDACTED_URL]"
                     private_value = any(
-                        self.is_private_email(email.group()) for email in EMAIL.finditer(value)
+                        self.is_private_email(email.address)
+                        for email in find_email_addresses(pair.value)
                     )
-                    if (
-                        key.casefold() in PRIVATE_URL_KEYS or private_value
-                    ) and value != "REDACTED":
-                        value = "REDACTED"
+                    key = pair.key.casefold()
+                    # Nested literal HTML escapes are not decoded into delimiters,
+                    # but cannot conceal a sensitive query key from privacy review.
+                    while key.startswith("amp;"):
+                        key = key.removeprefix("amp;")
+                    if (key in PRIVATE_URL_KEYS or private_value) and pair.value != "REDACTED":
+                        pairs.append(pair.raw.partition("=")[0] + "=REDACTED")
                         stats["url_parameter_redacted"] += 1
                         changed = True
-                    pairs.append((key, value))
+                    else:
+                        pairs.append(pair.raw)
                 # Preserve public URLs byte-for-byte when no private key occurs.
                 if not changed:
                     return raw
-                return urlunsplit(
-                    (url.scheme, url.netloc, url.path, urlencode(pairs), url.fragment)
-                )[len(prefix) :]
+                before_fragment, separator, fragment = raw.partition("#")
+                return (
+                    before_fragment.partition("?")[0] + "?" + "&".join(pairs) + separator + fragment
+                )
             except ValueError:
-                return raw
+                stats["url_redacted"] += 1
+                return "[REDACTED_URL]"
 
-        text = re.sub(r"(?:https?://|www\.)[^\s<>]+", replace_url, text, flags=re.I)
-        text = EMAIL.sub(replace_email, text)
+        text = WEB_LINK.sub(replace_url, text)
+
+        def mask_addresses(value: str) -> str:
+            for email in reversed(find_email_addresses(value)):
+                if self.is_private_email(email.address):
+                    value = value[: email.start] + "[EMAIL]" + value[email.end :]
+                    stats["email_redacted"] += 1
+            return value
+
+        # URL components already received their policy decision. Scanning raw
+        # URLs as prose would include path/query prefixes in email local parts.
+        pieces = []
+        cursor = 0
+        for link in WEB_LINK.finditer(text):
+            pieces.extend([mask_addresses(text[cursor : link.start()]), link.group()])
+            cursor = link.end()
+        pieces.append(mask_addresses(text[cursor:]))
+        text = "".join(pieces)
         names = frozenset(self.student_names)
         if names != self._cached_names:
             # Share common name prefixes and compile once for the whole batch.
@@ -257,8 +295,10 @@ class PrivacyRules:
         def replace_id(match: re.Match) -> str:
             value = match.group()
             try:
-                date = datetime.strptime(value, "%Y%m%d")
-                if 1900 <= date.year <= 2100:
+                parsed = date(int(value[:4]), int(value[4:6]), int(value[6:]))
+                if 1900 <= parsed.year <= 2100 and DATE_CONTEXT.search(
+                    match.string[max(0, match.start() - 50) : match.start()]
+                ):
                     return value
             except ValueError:
                 pass
@@ -268,8 +308,8 @@ class PrivacyRules:
         # Phone numbers first, so their 8-digit suffix is not mistaken for MSSV.
         # Preserve SmartNotice's established placeholders and labeled-span boundaries.
         text, count = re.subn(
-            r"(?i)\b(?:MSSV|mã\s+(?:số\s+)?sinh\s+viên)\s*[:#：-]?\s*\d{6,12}\b",
-            "[STUDENT_ID]",
+            r"(?i)(\b(?:MSSV|mã\s+(?:số\s+)?sinh\s+viên|student\s+ID)\s*[:#：-]?\s*)\d{6,12}\b",
+            lambda match: match[1] + "[STUDENT_ID]",
             text,
         )
         stats["student_id_redacted"] += count
@@ -279,12 +319,22 @@ class PrivacyRules:
             text,
         )
         stats["phone_redacted"] += count
-        text, count = MOBILE.subn("[PHONE]", text)
-        stats["phone_redacted"] += count
-        text = STUDENT_ID.sub(replace_id, text)
+
+        def replace_phone(match: re.Match) -> str:
+            for candidate in CALENDAR_DATE.finditer(match.string):
+                if candidate.start() < match.end() and candidate.end() > match.start():
+                    try:
+                        date(int(candidate[4]), int(candidate[3]), int(candidate[1]))
+                    except ValueError:
+                        continue
+                    return match.group()
+            stats["phone_redacted"] += 1
+            return "[PHONE]"
+
+        text = MOBILE.sub(replace_phone, text)
         fields = (
             (
-                r"(?i)(\b(?:ngày\s+sinh|date\s+of\s+birth|DOB)\s*[:：]\s*)(?:\d{1,4}[/-]\d{1,2}[/-]\d{1,4}|\d{8})",
+                r"(?i)(\b(?:ngày\s+sinh|date\s+of\s+birth|DOB)\s*[:：]\s*)(?:\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d{8})",
                 "birthdate_redacted",
                 "[NGAY_SINH]",
             ),
@@ -309,7 +359,7 @@ class PrivacyRules:
         for pattern, key, replacement in fields:
             text, count = re.subn(pattern, lambda match, value=replacement: match[1] + value, text)
             stats[key] += count
-        return text
+        return STUDENT_ID.sub(replace_id, text)
 
 
 def load_privacy_rules(

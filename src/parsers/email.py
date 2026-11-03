@@ -12,6 +12,10 @@ from smartnotice.parsers.mime import extract_content
 from smartnotice.parsers.thread import split_thread
 
 
+class EmptyEmailBodyError(ValueError):
+    """Report a source with no usable text MIME body, without exposing content."""
+
+
 @dataclass
 class ParsedEmail:
     """Keep decoded content and private header identities local to preparation.
@@ -48,7 +52,7 @@ def parse_email_details(raw: bytes) -> ParsedEmail:
     warnings: list[str] = []
     text = extract_content(message, warnings)
     if not text:
-        raise ValueError("Email has no text body")
+        raise EmptyEmailBodyError("Email has no text body")
     identities = []
     for key in ("From", "To", "Cc", "Bcc", "Reply-To"):
         for header in message.get_all(key, []):

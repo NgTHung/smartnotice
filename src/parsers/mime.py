@@ -26,8 +26,14 @@ def decode_part(part: EmailMessage, warnings: list[str]) -> str:
     return payload.decode("utf-8", errors="replace")
 
 
-def extract_content(part: EmailMessage, warnings: list[str]) -> str:
-    """Read one MIME body, excluding attachments and preferring nonempty plain text."""
+def extract_content(
+    part: EmailMessage, warnings: list[str], *, include_email_quotes: bool = False
+) -> str:
+    """Read one MIME body, excluding attachments and preferring nonempty plain text.
+
+    HTML email quotations are excluded by default. Private policy audits may
+    request include_email_quotes=True to inspect all body identities.
+    """
     if part.get_content_disposition() == "attachment" or part.get_filename():
         return ""
     content_type = part.get_content_type()
@@ -41,7 +47,7 @@ def extract_content(part: EmailMessage, warnings: list[str]) -> str:
                 key=lambda child: {"text/plain": 0, "text/html": 1}.get(child.get_content_type(), 2)
             )
             for child in children:
-                text = extract_content(child, warnings)
+                text = extract_content(child, warnings, include_email_quotes=include_email_quotes)
                 if text:
                     return text
             return ""
@@ -53,12 +59,20 @@ def extract_content(part: EmailMessage, warnings: list[str]) -> str:
                 ] or children[:1]
             else:
                 children = children[:1]
-        return "\n\n".join(filter(None, (extract_content(child, warnings) for child in children)))
+        return "\n\n".join(
+            filter(
+                None,
+                (
+                    extract_content(child, warnings, include_email_quotes=include_email_quotes)
+                    for child in children
+                ),
+            )
+        )
     if content_type not in {"text/plain", "text/html"}:
         return ""
     text = decode_part(part, warnings)
     if content_type == "text/html":
-        text = parse_html(text, email_quotes=True)
+        text = parse_html(text, email_quotes=not include_email_quotes)
     # Split authors before removing signatures/footer, otherwise a signature
     # can hide an attribution or make an original message part of the reply.
     return normalize_text(text, preserve_images=True)

@@ -63,6 +63,11 @@ def main(argv: list[str] | None = None) -> None:
     prep.add_argument("--output", type=Path, default=Path("data/interim/notices.jsonl"))
     prep.add_argument("--privacy-rules", type=Path, help="Private JSON identifier/contact lists")
     prep.add_argument("--email-policy", choices=["all", "legacy"], default="all")
+    prep.add_argument(
+        "--errors-output",
+        type=Path,
+        help="Continue after source errors and write rejected-source JSONL here",
+    )
     audit = commands.add_parser(
         "audit-email-policy", help="Write a private legacy email review list"
     )
@@ -156,8 +161,14 @@ def main(argv: list[str] | None = None) -> None:
                 args.output,
                 privacy_rules=args.privacy_rules,
                 email_policy=args.email_policy,
+                errors_output=args.errors_output,
             )
             print(f"Prepared {len(notices)} notices: {args.output}")
+            if args.errors_output:
+                failed_count = len(read_jsonl(args.errors_output))
+                print(f"Rejected {failed_count} sources: {args.errors_output}")
+                if failed_count:
+                    parser.exit(1, "smartnotice: review rejected sources before using this batch\n")
         elif args.command == "audit-email-policy":
             report = audit_email_policy(
                 args.inputs, args.output_dir, privacy_rules=args.privacy_rules
