@@ -10,6 +10,12 @@ The raw manifest records a relative `path`, `source_type` (`email` or `web`), `s
 
 A prepared Notice contains the SHA-256 of the source bytes, a `doc_id` from its first 20 hex characters, source provenance, reference date and origin, redacted `text`, sentences, a hashed group ID, holdout/synthetic flags, and privacy review metadata. Email source references contain the content hash, not a participant address or local filename.
 
+`attachments` is an ordered list of distinct HTTP(S) or `www.` URLs, not MIME attachment files. URLs remain in `text` as annotation evidence; each stored URL must occur there. Preparation unfolds URLs and decodes HTML entities before privacy filtering, then copies the redacted values. Link comparison ignores scheme/host case and preserves path/query case. Missing `attachments` in older records defaults to an empty list.
+
+`parser_warnings` contains safe MIME/charset warning codes and defaults to an empty list. `email_policy` records `all` (the default) or explicitly selected `legacy`. `privacy_rules_sha256` records the private configuration's source-byte SHA-256, or null when no file was supplied. The learned identity lists, original header fields, and configuration itself are not exported. Privacy learning from headers is local to each source; processing another email cannot change this notice's learned name list.
+
+One raw source still produces one Notice. Email parsing retains the outer author's contribution, including inline/bottom-posted replies, and excludes quoted or forwarded contributions. It does not create separate notices or infer historical dates from recovered quotations. A source with no remaining body fails preparation. Similar documents remain available for group-safe splitting instead of being discarded by the standalone cleaner's sender/content deduplication.
+
 `reference_date` comes from the email Date header or a manually verified web publication date. Collection time is not a substitute. Missing or invalid email dates remain null. Numeric dates without years can borrow the reference year and are marked inferred; relative expressions require annotation review. The date helper does not infer a year rollover.
 
 ## Keep offsets stable
@@ -17,6 +23,8 @@ A prepared Notice contains the SHA-256 of the source bytes, a `doc_id` from its 
 Offsets are zero-based, end-exclusive Python Unicode code point indices. `text[start:end]` must equal the stored sentence or span text. Normalize Unicode to NFC, redact identifiers, and segment before exporting annotation tasks. These offsets refer to the prepared text, not raw MIME bytes or DOM positions. The raw hash and manifest preserve source provenance.
 
 Changes to prepared text invalidate existing annotation offsets. Browser exports must match the canonical text exactly. Check offsets after import, especially for pasted emoji or other non-BMP characters because browser indexing can differ from Python indexing.
+
+Label Studio task data also carries `attachments` and `privacy_review_required`. Spans and model suggestions continue to resolve exclusively against `text`; the URL list is metadata, not a second offset coordinate system. Changing cleaning rules requires preparing and validating affected annotations again.
 
 ## Describe an event
 

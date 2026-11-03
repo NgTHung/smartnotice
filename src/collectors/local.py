@@ -47,3 +47,41 @@ def collect_email(path: Path, raw_dir: Path, consent_ref: str, group_id: str | N
     return save_source(
         path.read_bytes(), raw_dir, "email", consent_ref=consent_ref, group_id=group_id
     )
+
+
+def discover_email_files(inputs: list[Path]) -> list[Path]:
+    """Find .eml files recursively in stable path order, deduplicating input paths.
+
+    Adapted from Data Email/clean_emails.py. Invalid inputs or an empty selection
+    raise ValueError without disclosing participant filenames in the message.
+    """
+    found: set[Path] = set()
+    for source in inputs:
+        if source.is_file() and source.suffix.lower() == ".eml":
+            found.add(source.resolve())
+        elif source.is_dir():
+            found.update(
+                path.resolve()
+                for path in source.rglob("*")
+                if path.is_file() and path.suffix.lower() == ".eml"
+            )
+        else:
+            raise ValueError("Email inputs must be existing .eml files or directories")
+    if not found:
+        raise ValueError("No .eml files found in the input paths")
+    return sorted(found, key=lambda path: (str(path).casefold(), str(path)))
+
+
+def collect_emails(
+    inputs: list[Path], raw_dir: Path, consent_ref: str, group_id: str | None = None
+) -> list[dict]:
+    """Import selected files under a consent reference covering the entire batch.
+
+    Sources remain immutable. Each import retains the existing collector's
+    manifest/conflict checks; an error can leave earlier valid imports in place.
+    """
+    if not consent_ref.strip():
+        raise ValueError("A consent record reference is required")
+    return [
+        collect_email(path, raw_dir, consent_ref, group_id) for path in discover_email_files(inputs)
+    ]

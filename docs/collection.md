@@ -18,9 +18,31 @@ Record institution and sampling decisions in the private collection log. The exe
 
 ## Inspect prepared text
 
-Check that MIME decoding preserved Vietnamese characters, quoted replies and signatures were removed, and table header/value lines retained the action/date relationship. Quote stripping handles common boundaries and `>` lines; institution-specific footers and inline forwarding require review. Tables with merged headers can need manual correction.
+Check that MIME decoding preserved Vietnamese characters, quoted replies and signatures were removed, and table header/value lines retained the action/date relationship. The parser falls back to HTML for blank plain-text alternatives, respects multipart/related roots, and excludes MIME attachments. It separates English/Vietnamese reply boundaries and HTML quotes while preserving the outer author's inline replies. Institution-specific forwarding and merged table headers still require review. Check `parser_warnings` when fallback codecs or replacement characters were used.
 
-Automatic privacy filtering masks email addresses, labeled student IDs/phone numbers, and supplied names. Every prepared document retains `privacy_review_required=true`; automated matching does not establish anonymity. Review body names, unlabeled IDs, URLs, and free-form personal details before exporting tasks. Fix privacy defects in the source preparation settings and regenerate offsets before annotation.
+Automatic privacy filtering masks email addresses according to the selected policy, supplied/recognized names, student IDs, phone numbers, labeled birthdates, identity/account numbers, home addresses, and credentials. URL query filtering handles sensitive parameter names and private email values after URL decoding. URLs stay in both the text and `attachments`; no link is fetched. Academic dates, class codes and meaningful symbols remain available for annotation. Every prepared document retains `privacy_review_required=true`; automated matching does not establish anonymity. Review body names, unlabeled IDs, URL paths/fragments, and free-form personal details before exporting tasks. Fix privacy defects in the source preparation settings and regenerate offsets before annotation.
+
+## Review email retention
+
+The private JSON configuration accepts `student_names`, `student_emails`, `student_ids`, `student_domains`, and `public_emails`, each an array of nonempty strings. Empty arrays add no rules; in particular, an empty `student_domains` array does not remove built-in student domains. Keep populated configurations in private storage. The root README owns the commands and links to an empty template.
+
+The default `all` policy masks email addresses except explicit `public_emails`. A public exception takes precedence even if the same address appears in `student_emails`; review overlapping entries. `legacy` reproduces the supplied cleaner's address decisions, in this order:
+
+| Decision | Reason code | Behavior |
+|---|---|---|
+| Explicit public contact | `explicit_public` | Retain |
+| Explicit student/private address | `explicit_private` | Mask |
+| Class/group local-part pattern | `group_local_part` | Retain, even on a personal/student domain |
+| Built-in personal domain | `personal_domain` | Mask |
+| Built-in/configured student domain | `student_domain` | Mask |
+| Local part containing 7–12 consecutive digits | `numeric_local_part` | Mask |
+| None of the private rules matched | `not_matched_private_rule` | Retain as a review candidate |
+
+The exact patterns and domain sets live in [`privacy.py`](../src/preprocessing/privacy.py). The last rule permits unknown domains and individual institutional addresses; it does not establish that they are official contacts. Select the legacy policy explicitly and review its output before sharing.
+
+The local audit scans headers and decoded bodies, including quotes but excluding MIME attachments. It deduplicates identical raw sources, counts documents containing each address, includes configured public contacts absent from the corpus with a zero count, and reports parser failures by source hash. CSV rows retain addresses, decision reasons, and `review_required=true`; keep the whole report private. The audit does not import email, grant consent, or add candidates to `public_emails` automatically.
+
+MIME decoding, normalization and footer handling were adapted from the supplied `Data Email/clean_emails.py`; thread, URL and privacy rules came from `Data Email/content_processor.py`. Regression cases were adapted from its three test modules using synthetic inputs. SmartNotice retains its source hashes, dates, one-notice-per-source contract, and annotation offsets. The old standalone `from/content/attachments` CSV exporter and recovered-quote records are not pipeline outputs. The integration keeps class codes and meaningful symbols because they can express applicability conditions.
 
 ## Record evidence
 

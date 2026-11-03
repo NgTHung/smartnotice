@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 from pydantic import ValidationError
-from smartnotice.collectors.local import collect_email, save_source
+from smartnotice.collectors.local import collect_emails, save_source
 from smartnotice.collectors.web import WebCollector
 from smartnotice.demo import run_demo
 from smartnotice.io import read_jsonl, write_jsonl
@@ -22,6 +22,7 @@ from smartnotice.labeling.studio import (
 from smartnotice.labeling.validation import validate_annotation
 from smartnotice.labeling.workflow import suggest_tasks
 from smartnotice.preprocessing.pipeline import prepare
+from smartnotice.preprocessing.privacy_audit import audit_email_policy
 from smartnotice.preprocessing.split import DEFAULT_SEED, split_documents
 from smartnotice.quality import quality_summary
 from smartnotice.schemas import Annotation, Notice, Profile
@@ -44,7 +45,7 @@ def main(argv: list[str] | None = None) -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     demo = commands.add_parser("demo", help="Run the offline synthetic example")
     demo.add_argument("--root", type=Path, default=Path.cwd())
-    email = commands.add_parser("collect-email", help="Import a voluntarily supplied .eml")
+    email = commands.add_parser("collect-email", help="Import consented .eml files or a directory")
     email.add_argument("path", type=Path)
     email.add_argument("--consent-ref", required=True)
     email.add_argument("--group-id")
@@ -60,6 +61,14 @@ def main(argv: list[str] | None = None) -> None:
     prep = commands.add_parser("prepare", help="Parse, redact, and segment a manifest")
     prep.add_argument("--manifest", type=Path, default=Path("data/raw/manifest.jsonl"))
     prep.add_argument("--output", type=Path, default=Path("data/interim/notices.jsonl"))
+    prep.add_argument("--privacy-rules", type=Path, help="Private JSON identifier/contact lists")
+    prep.add_argument("--email-policy", choices=["all", "legacy"], default="all")
+    audit = commands.add_parser(
+        "audit-email-policy", help="Write a private legacy email review list"
+    )
+    audit.add_argument("inputs", nargs="+", type=Path)
+    audit.add_argument("--privacy-rules", type=Path)
+    audit.add_argument("--output-dir", type=Path, default=Path("reports/generated/email-policy"))
     suggest = commands.add_parser("suggest-labels", help="Draft review tasks with an LLM")
     suggest.add_argument("--notices", type=Path, default=Path("data/interim/notices.jsonl"))
     suggest.add_argument(
@@ -121,8 +130,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "demo":
             print(json.dumps(run_demo(args.root), ensure_ascii=False, indent=2))
         elif args.command == "collect-email":
-            row = collect_email(args.path, args.raw_dir, args.consent_ref, args.group_id)
-            print(row["path"])
+            rows = collect_emails([args.path], args.raw_dir, args.consent_ref, args.group_id)
+            print(rows[0]["path"] if len(rows) == 1 else f"Imported {len(rows)} email sources")
         elif args.command == "collect-web":
             if args.reference_date:
                 from datetime import date
@@ -142,7 +151,18 @@ def main(argv: list[str] | None = None) -> None:
             )
             print(row["path"])
         elif args.command == "prepare":
-            print(f"Prepared {len(prepare(args.manifest, args.output))} notices: {args.output}")
+            notices = prepare(
+                args.manifest,
+                args.output,
+                privacy_rules=args.privacy_rules,
+                email_policy=args.email_policy,
+            )
+            print(f"Prepared {len(notices)} notices: {args.output}")
+        elif args.command == "audit-email-policy":
+            report = audit_email_policy(
+                args.inputs, args.output_dir, privacy_rules=args.privacy_rules
+            )
+            print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.command == "suggest-labels":
             errors_output = args.errors_output or args.output.with_suffix(".errors.jsonl")
             if (
