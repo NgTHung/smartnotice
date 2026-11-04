@@ -3,7 +3,9 @@
 from email.message import EmailMessage
 
 import pytest
-from smartnotice.parsers.email import parse_email, parse_email_details
+from smartnotice.io import write_jsonl
+from smartnotice.parsers.email import EmptyEmailBodyError, parse_email, parse_email_details
+from smartnotice.preprocessing.pipeline import prepare
 from smartnotice.preprocessing.text import normalize_text
 
 
@@ -18,9 +20,49 @@ def test_control_characters_bullets_and_mbox_escaped_from():
     text = "Cha\u0300o\u200b em\r\r\n\r\r\n *\r\r\n  Học\xa0bổng\x00\ue117\r\r\n[cid:logo]"
     assert normalize_text(text) == "Chào em\n\n- Học bổng"
     assert (
-        normalize_text(">From the Foundations\nGPA ≥ 3.2; 📌")
-        == "From the Foundations\nGPA ≥ 3.2; 📌"
+        normalize_text(">From the Foundations\nGPA ≥ 3.2; ⚠️")
+        == "From the Foundations\nGPA ≥ 3.2; ⚠️"
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("📌 Hạn nộp 15/10.", "Hạn nộp 15/10."),
+        ("Hạn nộp 📌.", "Hạn nộp ."),
+        ("nộp📌hạn", "nộp hạn"),
+        ("(📌)", "()"),
+        ("👨‍💻️ Họp lớp", "Họp lớp"),
+        ("❤️‍🔥 Họp lớp", "❤ Họp lớp"),
+        ("👍🏽🇻🇳 Họp lớp", "Họp lớp"),
+        ("📌\n\n\n\n📌\nHọp lớp", "Họp lớp"),
+    ],
+)
+def test_emoji_outside_the_bmp_is_removed_without_gluing_words(text, expected):
+    assert normalize_text(text) == expected
+    assert normalize_text(normalize_text(text)) == expected
+
+
+def test_bmp_symbols_and_non_emoji_astral_letters_are_retained():
+    text = "⚠️ ☎ ✅ GPA ≥ 3.2 𝐇𝐚̣𝐧"
+    assert normalize_text(text) == text
+
+
+def test_emoji_only_body_is_rejected_as_empty():
+    with pytest.raises(EmptyEmailBodyError):
+        parse_email_details("Content-Type: text/plain; charset=utf-8\n\n📌📌\n".encode())
+
+
+def test_prepared_offsets_refer_to_text_without_emoji(tmp_path):
+    raw = "Content-Type: text/plain; charset=utf-8\n\n📌 Nộp đơn tại TP. Huế 🎓. Họp lớp 👍.\n"
+    (tmp_path / "notice.eml").write_bytes(raw.encode())
+    manifest = tmp_path / "manifest.jsonl"
+    row = {"path": "notice.eml", "source_type": "email", "consent_ref": "synthetic-test"}
+    write_jsonl(manifest, [row])
+    notice = prepare(manifest, tmp_path / "output.jsonl")[0]
+    assert all(ord(character) <= 0xFFFF for character in notice.text)
+    assert all(notice.text[s.start : s.end] == s.text for s in notice.sentences)
+    assert notice.sentences[0].text == "Nộp đơn tại TP. Huế ."
 
 
 def test_invalid_charset_is_recovered_with_safe_warning():

@@ -76,8 +76,8 @@ def test_invalid_source_does_not_replace_previous_output(tmp_path):
     write_jsonl(
         manifest,
         [
-            {"path": "notice.eml", "source_type": "email"},
-            {"path": "empty.eml", "source_type": "email"},
+            {"path": "notice.eml", "source_type": "email", "consent_ref": "synthetic-test"},
+            {"path": "empty.eml", "source_type": "email", "consent_ref": "synthetic-test"},
         ],
     )
     output = tmp_path / "notices.jsonl"

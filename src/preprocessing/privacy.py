@@ -12,6 +12,15 @@ from typing import Literal
 
 from smartnotice.parsers.addresses import find_email_addresses, normalize_email
 from smartnotice.preprocessing.links import WEB_LINK
+from smartnotice.preprocessing.names import (
+    NAME_WORD,
+    compile_name_pattern,
+    fold_name,
+    has_surname,
+    is_generic_phrase,
+    mask_person_names,
+    trim_name,
+)
 from smartnotice.preprocessing.urls import inspect_url
 
 DEFAULT_STUDENT_DOMAINS = {"student.hcmus.edu.vn", "sv.hcmus.edu.vn", "clc.fitus.edu.vn"}
@@ -32,21 +41,16 @@ PERSONAL_DOMAINS = {
 GROUP_LOCAL = re.compile(r"^(?:\d{2}(?:clc|c)\d{2}|tcta[_-]?2k\d{2})(?:[+].*)?$", re.I)
 
 
-UPPER = "A-ZÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ"
-
-
-NAME_WORD = "[" + UPPER + r"][^\W\d_]*"
-
-
 INTRO_NAME = re.compile(
-    r"(?i:\b(?:em|tôi|mình)\s+(?:tên(?:\s+là)?|là(?:\s+sinh\s+viên)?)\s+"
-    r"|\b(?:họ\s+(?:và\s+)?tên|tên\s+sinh\s+viên)\s*[:：]\s*"
+    r"(?i:(?P<labeled>\b(?:em|tôi|mình)\s+tên(?:\s+là)?\s+"
+    r"|\b(?:họ\s+(?:và\s+)?tên|tên\s+sinh\s+viên)\s*[:：]\s*)"
+    r"|\b(?:em|tôi|mình)\s+là(?:\s+sinh\s+viên)?\s+"
     r"|\bsinh\s+viên\s*[:：]?\s+)"
     r"(?P<name>" + NAME_WORD + r"(?:[ \t]+" + NAME_WORD + r"){1,6})"
 )
 
 
-STUDENT_ID = re.compile(r"(?<!\w)[12]\d{7}(?!\w)")
+STUDENT_ID = re.compile(r"(?<!\d)[12]\d{7}(?![^\W_])")
 
 
 MOBILE = re.compile(r"(?<![\w/])(?:\+?84[ .()-]*|0)[35789](?:[ .()-]*\d){8}(?!\d)")
@@ -100,6 +104,7 @@ class PrivacyRules:
     student_domains: set[str] = field(default_factory=lambda: set(DEFAULT_STUDENT_DOMAINS))
     public_emails: set[str] = field(default_factory=set)
     _name_pattern: re.Pattern | None = field(default=None, init=False, repr=False)
+    _folded_name_pattern: re.Pattern | None = field(default=None, init=False, repr=False)
     _cached_names: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
 
     @classmethod
@@ -165,6 +170,9 @@ class PrivacyRules:
 
         Never persist these names or addresses. Do not reuse the instance across
         sources unless its changing identity set is intentionally part of a run.
+        A generic phrase is never learned. Outside an explicit name label, a body
+        phrase must begin with a recognized surname, because the capitalized words
+        after `sinh viên` usually name a faculty or program rather than a person.
         """
         identity_rules = replace(self, email_policy="legacy")
         text = unicodedata.normalize("NFC", text)
@@ -173,10 +181,18 @@ class PrivacyRules:
                 self.student_emails.add(normalize_email(address))
                 name = re.sub(r"[\d()\[\]]", "", display_name).replace(",", " ")
                 name = unicodedata.normalize("NFC", " ".join(name.split()))
-                if re.fullmatch(NAME_WORD + r"(?:\s+" + NAME_WORD + r"){1,6}", name):
+                if re.fullmatch(
+                    NAME_WORD + r"(?:\s+" + NAME_WORD + r"){1,6}", name
+                ) and not is_generic_phrase(name):
                     self.student_names.add(name)
         for match in INTRO_NAME.finditer(text):
-            self.student_names.add(match["name"])
+            name = trim_name(match["name"])
+            if (
+                len(name.split()) >= 2
+                and not is_generic_phrase(name)
+                and (match["labeled"] or has_surname(name))
+            ):
+                self.student_names.add(name)
 
     def sender_alias(self, address: str, stats: Counter) -> str:
         """Return the legacy pseudonym or allowed address; this is not anonymity."""
@@ -193,7 +209,9 @@ class PrivacyRules:
         compact dates from the generic eight-digit ID rule; labeled IDs and
         birthdates remain private. URL inspection shares the audit's bounded
         component decoding. Unsafe/private path or fragment URLs become
-        [REDACTED_URL]. Unrestricted names still require human review.
+        [REDACTED_URL]. Listed names of three or more words match across diacritic
+        forms; `mask_person_names` covers unlisted student and staff names. Names
+        outside its rules still require human review.
         """
         text = unicodedata.normalize("NFC", text)
 
@@ -259,33 +277,16 @@ class PrivacyRules:
         text = "".join(pieces)
         names = frozenset(self.student_names)
         if names != self._cached_names:
-            # Share common name prefixes and compile once for the whole batch.
-            # Large school recipient lists can contain thousands of students.
-            trie: dict = {}
-            for name in sorted(names):
-                node = trie
-                for character in " ".join(name.casefold().split()):
-                    node = node.setdefault(character, {})
-                node[""] = {}
-
-            def expression(node: dict) -> str:
-                branches = [
-                    (r"\s+" if character == " " else re.escape(character)) + expression(child)
-                    for character, child in node.items()
-                    if character
-                ]
-                result = "|".join(branches)
-                if len(branches) > 1:
-                    result = "(?:" + result + ")"
-                return "(?:" + result + ")?" if "" in node and branches else result
-
-            self._name_pattern = (
-                re.compile(r"(?<!\w)" + expression(trie) + r"(?!\w)", re.I) if names else None
+            self._name_pattern = compile_name_pattern(names)
+            # Two-word folded forms collide with ordinary words such as "ấn bụi".
+            self._folded_name_pattern = compile_name_pattern(
+                {fold_name(name) for name in names if len(name.split()) >= 3}, folded=True
             )
             self._cached_names = names
-        if self._name_pattern:
-            text, count = self._name_pattern.subn("[NAME]", text)
-            stats["name_redacted"] += count
+        for pattern in (self._name_pattern, self._folded_name_pattern):
+            if pattern:
+                text, count = pattern.subn("[NAME]", text)
+                stats["name_redacted"] += count
         for identifier in sorted(self.student_ids, key=len, reverse=True):
             text, count = re.subn(
                 r"(?<!\w)" + re.escape(identifier) + r"(?!\w)", "[STUDENT_ID]", text
@@ -359,7 +360,8 @@ class PrivacyRules:
         for pattern, key, replacement in fields:
             text, count = re.subn(pattern, lambda match, value=replacement: match[1] + value, text)
             stats[key] += count
-        return STUDENT_ID.sub(replace_id, text)
+        # Runs last so a line's [STUDENT_ID] placeholder can identify its name.
+        return mask_person_names(STUDENT_ID.sub(replace_id, text), stats)
 
 
 def load_privacy_rules(

@@ -271,7 +271,17 @@ def test_safe_text_attachments_offsets_and_label_studio_export(tmp_path):
         )
     )
     manifest = tmp_path / "manifest.jsonl"
-    write_jsonl(manifest, [{"path": source.name, "source_type": "email", "synthetic": True}])
+    write_jsonl(
+        manifest,
+        [
+            {
+                "path": source.name,
+                "source_type": "email",
+                "consent_ref": "synthetic-test",
+                "synthetic": True,
+            }
+        ],
+    )
     notice = prepare(manifest, tmp_path / "notices.jsonl")[0]
     task = export_tasks([notice])[0]["data"]
     assert "Hạn nộp 07.11.2026 17:00" in task["text"]
@@ -342,8 +352,8 @@ def test_batch_review_mode_keeps_valid_records_and_reports_empty_contribution(tm
     write_jsonl(
         manifest,
         [
-            {"path": "empty.eml", "source_type": "email"},
-            {"path": "valid.eml", "source_type": "email"},
+            {"path": "empty.eml", "source_type": "email", "consent_ref": "synthetic-test"},
+            {"path": "valid.eml", "source_type": "email", "consent_ref": "synthetic-test"},
         ],
     )
     errors = tmp_path / "failures.jsonl"
@@ -363,8 +373,8 @@ def test_cli_batch_errors_are_visible_and_return_nonzero(tmp_path, capsys):
     write_jsonl(
         manifest,
         [
-            {"path": "valid.eml", "source_type": "email"},
-            {"path": "empty.eml", "source_type": "email"},
+            {"path": "valid.eml", "source_type": "email", "consent_ref": "synthetic-test"},
+            {"path": "empty.eml", "source_type": "email", "consent_ref": "synthetic-test"},
         ],
     )
     output, errors = tmp_path / "notices.jsonl", tmp_path / "errors.jsonl"
@@ -392,10 +402,23 @@ def test_batch_errors_cannot_replace_inputs_or_notice_output(tmp_path, target):
     source = tmp_path / "notice.eml"
     source.write_bytes(_email("Thông báo hợp lệ."))
     manifest = tmp_path / "manifest.jsonl"
-    write_jsonl(manifest, [{"path": source.name, "source_type": "email"}])
+    write_jsonl(
+        manifest, [{"path": source.name, "source_type": "email", "consent_ref": "synthetic-test"}]
+    )
     output = tmp_path / "notices.jsonl"
     errors = {"source": source, "manifest": manifest, "output": output}[target]
     original = source.read_bytes(), manifest.read_bytes()
     with pytest.raises(ValueError, match="distinct"):
         prepare(manifest, output, errors_output=errors)
     assert (source.read_bytes(), manifest.read_bytes()) == original
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Danh sách sinh viên24120001: đã nộp",
+        "https://example.invalid/bang_diem_24120001.pdf",
+    ],
+)
+def test_student_id_joined_to_a_word_is_masked(text):
+    assert "24120001" not in normalize_and_redact(text)[0]

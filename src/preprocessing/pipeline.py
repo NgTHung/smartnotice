@@ -31,7 +31,8 @@ def prepare(
     replacement. Legacy email retention is explicit and still requires review.
     With errors_output, reject empty/unparseable sources into safe failure JSONL
     and continue; without it, a source failure leaves the previous output intact.
-    Invalid manifests, conflicting metadata, and schema failures always raise.
+    Invalid manifests, email without consent_ref, conflicting metadata, and
+    schema failures always raise.
     """
     notices: dict[str, Notice] = {}
     failures: list[PreparationFailure] = []
@@ -65,6 +66,8 @@ def prepare(
         warnings: list[str] = []
         privacy = deepcopy(base_rules)
         if row["source_type"] == "email":
+            if not str(row.get("consent_ref") or "").strip():
+                raise ValueError(f"Manifest line {number}: email source requires consent_ref")
             try:
                 parsed = parse_email_details(raw)
             except EmptyEmailBodyError:
