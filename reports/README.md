@@ -5,6 +5,9 @@ Reports connect data and experiment claims to repeatable outputs. Keep dated val
 - `generated/demo/` holds synthetic quality output, Label Studio tasks, notebook exports, and figures. Regenerate it with the commands in the root README.
 - `validation-2026-10-20.md` records the verified setup and example workflow.
 - [Validation, 2026-11-03](validation-2026-11-03.md) records parser and privacy regression checks.
+- [Validation, 2026-11-04](validation-2026-11-04.md) records the preparation handoff to human review and LLM labeling.
+- [Cleaning run, 2026-11-04](validation-2026-11-04-cleaning-run.md) records the staged run over the email archives after emoji removal.
+- [Name masking, 2026-11-04](validation-2026-11-04-name-masking.md) records the name audit and the staged run after its fixes.
 - `report-outline.md` organizes the Vietnamese course report around the seven required stages.
 
 Local generated outputs are excluded from Git because real datasets can contain personal information. Review figures and examples before adding them to submission materials.
