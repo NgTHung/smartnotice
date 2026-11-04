@@ -6,8 +6,8 @@ The [data contract](interface.md) owns schema rules. The [course requirements](a
 
 ## Prepare and label
 
-1. Complete privacy review of prepared text before task export. Keep annotator identities pseudonymous.
-2. Export tasks with the command in the root README. Create a Label Studio project, paste [`label_studio.xml`](../data/annotations/label_studio.xml) into its labeling configuration, and import the task JSON.
+1. Complete privacy review of prepared text before task export, using `privacy-review-queue` as described in the root README. Keep annotator identities pseudonymous.
+2. Export tasks with the command in the root README. It holds back real notices without a matching clearance record and reports how many. Create a Label Studio project, paste [`label_studio.xml`](../data/annotations/label_studio.xml) into its labeling configuration, and import the task JSON.
 3. Select the smallest complete ACTION and argument phrases. Include explicit exclusions in AUDIENCE or CONDITION. Split interval endpoints into distinct TIME spans.
 4. Draw relations from ACTION to argument. Label TIME links START, DEADLINE, or EVENT_TIME. Label other links with their argument type. Reuse argument spans across actions when justified.
 5. Export completed annotations as JSON, not predictions. Keep independent annotators' exports separate before adjudication.

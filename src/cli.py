@@ -7,11 +7,16 @@ from pathlib import Path
 
 import httpx
 from pydantic import ValidationError
-from smartnotice.collectors.local import collect_email, save_source
+from smartnotice.collectors.local import collect_emails, save_source
 from smartnotice.collectors.web import WebCollector
 from smartnotice.demo import run_demo
 from smartnotice.io import read_jsonl, write_jsonl
-from smartnotice.labeling.llm import require_provider_approval
+from smartnotice.labeling.llm import (
+    has_privacy_clearance,
+    has_provider_approval,
+    privacy_review_queue,
+    require_provider_approval,
+)
 from smartnotice.labeling.pairs import build_pairs
 from smartnotice.labeling.providers import configured_model, load_local_env
 from smartnotice.labeling.studio import (
@@ -22,6 +27,7 @@ from smartnotice.labeling.studio import (
 from smartnotice.labeling.validation import validate_annotation
 from smartnotice.labeling.workflow import suggest_tasks
 from smartnotice.preprocessing.pipeline import prepare
+from smartnotice.preprocessing.privacy_audit import audit_email_policy
 from smartnotice.preprocessing.split import DEFAULT_SEED, split_documents
 from smartnotice.quality import quality_summary
 from smartnotice.schemas import Annotation, Notice, Profile
@@ -44,7 +50,7 @@ def main(argv: list[str] | None = None) -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     demo = commands.add_parser("demo", help="Run the offline synthetic example")
     demo.add_argument("--root", type=Path, default=Path.cwd())
-    email = commands.add_parser("collect-email", help="Import a voluntarily supplied .eml")
+    email = commands.add_parser("collect-email", help="Import consented .eml files or a directory")
     email.add_argument("path", type=Path)
     email.add_argument("--consent-ref", required=True)
     email.add_argument("--group-id")
@@ -60,10 +66,34 @@ def main(argv: list[str] | None = None) -> None:
     prep = commands.add_parser("prepare", help="Parse, redact, and segment a manifest")
     prep.add_argument("--manifest", type=Path, default=Path("data/raw/manifest.jsonl"))
     prep.add_argument("--output", type=Path, default=Path("data/interim/notices.jsonl"))
+    prep.add_argument("--privacy-rules", type=Path, help="Private JSON identifier/contact lists")
+    prep.add_argument("--email-policy", choices=["all", "legacy"], default="all")
+    prep.add_argument(
+        "--errors-output",
+        type=Path,
+        help="Continue after source errors and write rejected-source JSONL here",
+    )
+    audit = commands.add_parser(
+        "audit-email-policy", help="Write a private legacy email review list"
+    )
+    audit.add_argument("inputs", nargs="+", type=Path)
+    audit.add_argument("--privacy-rules", type=Path)
+    audit.add_argument("--output-dir", type=Path, default=Path("reports/generated/email-policy"))
     suggest = commands.add_parser("suggest-labels", help="Draft review tasks with an LLM")
     suggest.add_argument("--notices", type=Path, default=Path("data/interim/notices.jsonl"))
     suggest.add_argument(
         "--doc-id", action="append", help="Select an ID; repeat for several notices"
+    )
+    suggest.add_argument(
+        "--selection",
+        type=Path,
+        help="JSONL with doc_id rows, such as a split file or failure ledger",
+    )
+    suggest.add_argument("--split", help="Use only --selection rows with this split value")
+    suggest.add_argument(
+        "--approved-only",
+        action="store_true",
+        help="Skip selected real notices without approval for this provider",
     )
     suggest.add_argument("--provider", choices=["gemini", "featherless"], required=True)
     suggest.add_argument("--model", help="Override GEMINI_MODEL or FEATHERLESS_MODEL")
@@ -87,6 +117,7 @@ def main(argv: list[str] | None = None) -> None:
         "split",
         "quality",
         "export-tasks",
+        "privacy-review-queue",
         "import-labels",
         "validate-labels",
         "build-pairs",
@@ -104,7 +135,17 @@ def main(argv: list[str] | None = None) -> None:
             )
         elif name == "export-tasks":
             command.add_argument(
+                "--approvals", type=Path, default=Path("data/annotations/provider_approvals.jsonl")
+            )
+            command.add_argument(
                 "--output", type=Path, default=Path("data/annotations/label_studio_tasks.json")
+            )
+        elif name == "privacy-review-queue":
+            command.add_argument(
+                "--approvals", type=Path, default=Path("data/annotations/provider_approvals.jsonl")
+            )
+            command.add_argument(
+                "--output", type=Path, default=Path("data/interim/privacy_review_queue.jsonl")
             )
         elif name == "import-labels":
             command.add_argument("--input", type=Path, required=True)
@@ -121,8 +162,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "demo":
             print(json.dumps(run_demo(args.root), ensure_ascii=False, indent=2))
         elif args.command == "collect-email":
-            row = collect_email(args.path, args.raw_dir, args.consent_ref, args.group_id)
-            print(row["path"])
+            rows = collect_emails([args.path], args.raw_dir, args.consent_ref, args.group_id)
+            print(rows[0]["path"] if len(rows) == 1 else f"Imported {len(rows)} email sources")
         elif args.command == "collect-web":
             if args.reference_date:
                 from datetime import date
@@ -142,7 +183,24 @@ def main(argv: list[str] | None = None) -> None:
             )
             print(row["path"])
         elif args.command == "prepare":
-            print(f"Prepared {len(prepare(args.manifest, args.output))} notices: {args.output}")
+            notices = prepare(
+                args.manifest,
+                args.output,
+                privacy_rules=args.privacy_rules,
+                email_policy=args.email_policy,
+                errors_output=args.errors_output,
+            )
+            print(f"Prepared {len(notices)} notices: {args.output}")
+            if args.errors_output:
+                failed_count = len(read_jsonl(args.errors_output))
+                print(f"Rejected {failed_count} sources: {args.errors_output}")
+                if failed_count:
+                    parser.exit(1, "smartnotice: review rejected sources before using this batch\n")
+        elif args.command == "audit-email-policy":
+            report = audit_email_policy(
+                args.inputs, args.output_dir, privacy_rules=args.privacy_rules
+            )
+            print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.command == "suggest-labels":
             errors_output = args.errors_output or args.output.with_suffix(".errors.jsonl")
             if (
@@ -154,11 +212,32 @@ def main(argv: list[str] | None = None) -> None:
             notices = _load(args.notices, Notice)
             if len({n.doc_id for n in notices}) != len(notices):
                 raise ValueError("Notice document IDs must be unique")
-            requested = set(args.doc_id or [n.doc_id for n in notices])
+            if args.split and not args.selection:
+                raise ValueError("--split requires a --selection file")
+            requested = set(args.doc_id or [])
+            if args.selection:
+                requested |= {
+                    row["doc_id"]
+                    for row in read_jsonl(args.selection)
+                    if args.split is None or row.get("split") == args.split
+                }
+            elif not requested:
+                requested = {n.doc_id for n in notices}
             selected = [notice for notice in notices if notice.doc_id in requested]
             if not selected or requested != {n.doc_id for n in selected}:
                 raise ValueError("Selection contains no notices or unknown document IDs")
             approvals = read_jsonl(args.approvals) if args.approvals.exists() else []
+            if args.approved_only:
+                count = len(selected)
+                selected = [
+                    notice
+                    for notice in selected
+                    if has_provider_approval(notice, args.provider, approvals)
+                ]
+                requested = {notice.doc_id for notice in selected}
+                print(f"Skipped {count - len(selected)} unapproved notices", file=sys.stderr)
+                if not selected:
+                    raise ValueError("No selected notices are approved for this provider")
             for notice in selected:
                 require_provider_approval(notice, args.provider, approvals)
             load_local_env()
@@ -203,7 +282,22 @@ def main(argv: list[str] | None = None) -> None:
                 _json(args.output, report)
                 print(json.dumps(report, ensure_ascii=False, indent=2))
             elif args.command == "export-tasks":
-                _json(args.output, export_tasks(notices))
+                approvals = read_jsonl(args.approvals) if args.approvals.exists() else []
+                cleared = [n for n in notices if has_privacy_clearance(n, approvals)]
+                if not cleared:
+                    raise ValueError("No privacy-cleared notices; run privacy-review-queue")
+                _json(args.output, export_tasks(cleared))
+                print(
+                    f"Exported {len(cleared)} tasks; "
+                    f"held {len(notices) - len(cleared)} without privacy review: {args.output}"
+                )
+            elif args.command == "privacy-review-queue":
+                if args.output.resolve() in {args.approvals.resolve(), args.notices.resolve()}:
+                    raise ValueError("The review queue must not replace its inputs")
+                approvals = read_jsonl(args.approvals) if args.approvals.exists() else []
+                queue = privacy_review_queue(notices, approvals)
+                write_jsonl(args.output, [item.model_dump(mode="json") for item in queue])
+                print(f"{len(queue)} of {len(notices)} notices await review: {args.output}")
             elif args.command == "import-labels":
                 tasks = json.loads(args.input.read_text(encoding="utf-8-sig"))
                 annotations = import_tasks(tasks, notices)

@@ -78,3 +78,18 @@ def test_nfc_redaction_precedes_exact_sentence_offsets():
 )
 def test_numeric_date_normalization(value, reference, expected, inferred):
     assert normalize_date(value, reference) == (expected, inferred)
+
+
+def test_segmentation_keeps_titles_and_list_markers_with_their_text():
+    text = (
+        "1. Liên hệ PGS.TS. Mai tại TP. Hồ Chí Minh. Nộp đơn.\na. Đóng phí!\n*2. Họp ở phòng 1. Về."
+    )
+    sentences = segment_sentences(text)
+    assert [s.text for s in sentences] == [
+        "1. Liên hệ PGS.TS. Mai tại TP. Hồ Chí Minh.",
+        "Nộp đơn.",
+        "a. Đóng phí!",
+        "*2. Họp ở phòng 1.",
+        "Về.",
+    ]
+    assert all(text[s.start : s.end] == s.text for s in sentences)

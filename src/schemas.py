@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -22,7 +23,18 @@ class Sentence(Record):
     text: str
 
 
+class PreparationFailure(Record):
+    """Identify one rejected source using safe manifest and source references."""
+
+    manifest_line: int = Field(ge=1)
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    raw_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: Literal["empty_notice_body", "email_parse_failed", "web_parse_failed"]
+
+
 class Notice(Record):
+    """A prepared source with exact evidence offsets and redacted URL copies."""
+
     doc_id: str
     source_type: Literal["email", "web"]
     source_ref: str
@@ -30,6 +42,10 @@ class Notice(Record):
     reference_date: date | None = None
     reference_date_origin: Literal["email_header", "published", "missing"]
     text: str
+    attachments: list[str] = Field(default_factory=list)
+    parser_warnings: list[str] = Field(default_factory=list)
+    email_policy: Literal["all", "legacy"] = "all"
+    privacy_rules_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     sentences: list[Sentence]
     group_id: str
     domain_holdout: bool = False
@@ -39,6 +55,16 @@ class Notice(Record):
 
     @model_validator(mode="after")
     def check_offsets(self):
+        if len(self.attachments) != len(set(self.attachments)):
+            raise ValueError("Attachment URLs must be unique")
+        for link in self.attachments:
+            try:
+                parsed = urlsplit("https://" + link if link.lower().startswith("www.") else link)
+                valid = parsed.scheme.lower() in {"http", "https"} and bool(parsed.hostname)
+            except ValueError:
+                valid = False
+            if not valid or any(char.isspace() for char in link) or link not in self.text:
+                raise ValueError("Attachment URL must be a web link present in prepared text")
         for sentence in self.sentences:
             if self.text[sentence.start : sentence.end] != sentence.text:
                 raise ValueError(f"Invalid sentence offsets: {sentence.sentence_id}")
@@ -102,9 +128,23 @@ class ProviderApproval(Record):
     text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     reviewer_id: str = Field(min_length=1)
     reviewed_at: datetime
-    providers: list[Provider] = Field(min_length=1)
+    providers: list[Provider] = Field(default_factory=list)
     privacy_cleared: bool
     provider_use_approved: bool
+
+
+class PrivacyReviewItem(Record):
+    """List one prepared text awaiting review; its approval template is not clearance."""
+
+    doc_id: str
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_type: Literal["email", "web"]
+    redaction_count: int = Field(ge=0)
+    long_number_count: int = Field(ge=0)
+    parser_warnings: list[str]
+    attachments: list[str]
+    text: str
+    approval: dict
 
 
 class ProposalProvenance(Record):

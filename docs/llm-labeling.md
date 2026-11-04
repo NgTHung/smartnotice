@@ -55,7 +55,7 @@ uv run smartnotice suggest-labels --notices data/interim/demo/notices.jsonl --do
 
 Each command creates a JSON task array and a sibling `.errors.jsonl` ledger. For example, `smoke-gemini.json` has `smoke-gemini.errors.jsonl`. A successful single-document run writes one prediction and an empty failure ledger. Existing outputs are refused; use a new filename for another attempt. A nonzero exit code can accompany a partial batch: inspect the success count and failure ledger before retrying failed document IDs.
 
-Omit `--doc-id` to process the full supplied corpus sequentially. Repeat `--doc-id` to select several notices. All selected real documents must pass approval before the first request. There are no automatic retries or silent provider switches. Use `--errors-output` to choose a different failure-ledger path. Failures contain safe document IDs and reasons, never API keys or response bodies.
+Omit `--doc-id` to process the full supplied corpus sequentially. Repeat `--doc-id` to select several notices, or pass `--selection` with a JSONL file whose rows contain `doc_id`. A split file works with `--split train`, and a failure ledger selects the documents to retry. Add `--approved-only` to skip selected real notices that lack approval for the provider. Without it, all selected real documents must pass approval before the first request. There are no automatic retries or silent provider switches. Use `--errors-output` to choose a different failure-ledger path. Failures contain safe document IDs and reasons, never API keys or response bodies.
 
 ## Review in Label Studio
 
@@ -80,13 +80,13 @@ Dates and structured audience constraints remain a separate human curation step.
 
 Complete privacy review of the exact text before recording approval. The prepared Notice's `privacy_review_required` flag is not evidence of clearance. Collection consent alone does not establish permission to transfer text to an external model provider.
 
-Create a private UTF-8 JSONL file at `data/annotations/provider_approvals.jsonl`, or pass another path with `--approvals`. Each row follows this shape; replace the placeholders only after actual human review:
+Run `uv run smartnotice privacy-review-queue` to list the uncleared notices with their text hashes and blank approval templates. Create a private UTF-8 JSONL file at `data/annotations/provider_approvals.jsonl`, or pass another path with `--approvals`. Each row follows this shape; replace the placeholders only after actual human review:
 
 ```json
 {"doc_id":"<prepared-doc-id>","text_sha256":"<64-character-sha256>","reviewer_id":"reviewer-1","reviewed_at":"<actual-time-with-timezone>","providers":["gemini","featherless"],"privacy_cleared":true,"provider_use_approved":true}
 ```
 
-Compute the digest with `hashlib.sha256(notice.text.encode("utf-8")).hexdigest()`, or use `text_sha256` from `smartnotice.labeling.llm`. Approval requires the exact document ID, text hash, named provider, both true flags, a nonempty reviewer ID, and a timezone-aware review time that is not in the future. A prepared-text edit invalidates that approval and all affected offsets. Keep approval and consent records out of Git.
+For a review that does not permit provider transfer, set `providers` to an empty list and `provider_use_approved` to false. Approval requires the exact document ID, text hash, named provider, both true flags, a nonempty reviewer ID, and a timezone-aware review time that is not in the future. A prepared-text edit invalidates that approval and all affected offsets. Keep approval and consent records out of Git.
 
 ## Check software behavior
 

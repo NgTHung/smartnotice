@@ -10,11 +10,22 @@ from smartnotice.schemas import Notice
 DEFAULT_SEED = 42
 
 
+def _similar(left: str, right: str, threshold: float) -> bool:
+    """Return ratio() >= threshold, checking its cheaper upper bounds first."""
+    matcher = SequenceMatcher(None, left, right, autojunk=False)
+    return (
+        matcher.real_quick_ratio() >= threshold
+        and matcher.quick_ratio() >= threshold
+        and matcher.ratio() >= threshold
+    )
+
+
 def group_documents(notices: list[Notice], similarity: float = 0.9) -> dict[str, str]:
     """Merge source groups and similar normalized texts transitively.
 
-    Pairwise character similarity costs O(n²). Review merged groups before
-    training, especially when common boilerplate dominates short notices.
+    Pairwise comparison costs O(n²); upper bounds and already-merged groups skip
+    most full character comparisons without changing the result. Review merged
+    groups before training, especially when boilerplate dominates short notices.
     """
     if not 0 < similarity <= 1:
         raise ValueError("Similarity must be in (0, 1]")
@@ -29,10 +40,8 @@ def group_documents(notices: list[Notice], similarity: float = 0.9) -> dict[str,
     texts = [re.sub(r"\s+", " ", notice.text.casefold()).strip() for notice in notices]
     for i, notice in enumerate(notices):
         for j in range(i):
-            same = notice.group_id == notices[j].group_id
-            if (
-                same
-                or SequenceMatcher(None, texts[i], texts[j], autojunk=False).ratio() >= similarity
+            if find(i) != find(j) and (
+                notice.group_id == notices[j].group_id or _similar(texts[i], texts[j], similarity)
             ):
                 parents[find(i)] = find(j)
     members: dict[int, list[str]] = {}
@@ -82,6 +91,7 @@ def split_documents(
             if mapping[n.doc_id] in reserved
             else assignments[mapping[n.doc_id]],
             "seed": seed,
+            "similarity": similarity,
         }
         for n in notices
     ]
