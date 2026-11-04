@@ -128,9 +128,23 @@ class ProviderApproval(Record):
     text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     reviewer_id: str = Field(min_length=1)
     reviewed_at: datetime
-    providers: list[Provider] = Field(min_length=1)
+    providers: list[Provider] = Field(default_factory=list)
     privacy_cleared: bool
     provider_use_approved: bool
+
+
+class PrivacyReviewItem(Record):
+    """List one prepared text awaiting review; its approval template is not clearance."""
+
+    doc_id: str
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_type: Literal["email", "web"]
+    redaction_count: int = Field(ge=0)
+    long_number_count: int = Field(ge=0)
+    parser_warnings: list[str]
+    attachments: list[str]
+    text: str
+    approval: dict
 
 
 class ProposalProvenance(Record):

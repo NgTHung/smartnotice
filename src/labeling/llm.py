@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -11,6 +12,7 @@ from smartnotice.schemas import (
     Argument,
     Event,
     Notice,
+    PrivacyReviewItem,
     Provider,
     ProviderApproval,
     Span,
@@ -70,14 +72,11 @@ def json_sha256(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def require_provider_approval(notice: Notice, provider: Provider, approvals: list[dict]) -> None:
-    """Allow synthetic data or a human-approved real text/provider pair.
-
-    A prepared notice's privacy_review_required flag is not clearance.
-    Invalid or stale approval records never authorize provider transfer.
-    """
-    if notice.synthetic:
-        return
+def _reviews_of(notice: Notice, approvals: list[dict]) -> list[ProviderApproval]:
+    """Return records for this exact text; any invalid ledger row raises ValueError."""
+    digest = text_sha256(notice)
+    now = datetime.now(UTC)
+    reviews = []
     for row in approvals:
         try:
             approval = ProviderApproval.model_validate(row)
@@ -85,16 +84,67 @@ def require_provider_approval(notice: Notice, provider: Provider, approvals: lis
             raise ValueError("Invalid provider approval record") from exc
         if (
             approval.doc_id == notice.doc_id
-            and approval.text_sha256 == text_sha256(notice)
-            and provider in approval.providers
-            and approval.privacy_cleared
-            and approval.provider_use_approved
+            and approval.text_sha256 == digest
             and approval.reviewed_at.tzinfo is not None
-            and approval.reviewed_at <= datetime.now(UTC)
+            and approval.reviewed_at <= now
             and approval.reviewer_id.strip()
         ):
-            return
-    raise ValueError(f"Missing privacy and provider approval for document {notice.doc_id}")
+            reviews.append(approval)
+    return reviews
+
+
+def has_privacy_clearance(notice: Notice, approvals: list[dict]) -> bool:
+    """Return whether a person cleared this exact text; synthetic data needs no review."""
+    return notice.synthetic or any(r.privacy_cleared for r in _reviews_of(notice, approvals))
+
+
+def has_provider_approval(notice: Notice, provider: Provider, approvals: list[dict]) -> bool:
+    """Return whether this exact text is cleared for transfer to the named provider."""
+    return notice.synthetic or any(
+        provider in r.providers and r.privacy_cleared and r.provider_use_approved
+        for r in _reviews_of(notice, approvals)
+    )
+
+
+def require_provider_approval(notice: Notice, provider: Provider, approvals: list[dict]) -> None:
+    """Allow synthetic data or a human-approved real text/provider pair.
+
+    A prepared notice's privacy_review_required flag is not clearance.
+    Invalid or stale approval records never authorize provider transfer.
+    """
+    if not has_provider_approval(notice, provider, approvals):
+        raise ValueError(f"Missing privacy and provider approval for document {notice.doc_id}")
+
+
+def privacy_review_queue(notices: list[Notice], approvals: list[dict]) -> list[PrivacyReviewItem]:
+    """List real notices without clearance for their current prepared text.
+
+    Counts direct attention only; the reviewer still reads the whole text. The
+    blank approval template fails validation until a person completes it.
+    """
+    return [
+        PrivacyReviewItem(
+            doc_id=notice.doc_id,
+            text_sha256=text_sha256(notice),
+            source_type=notice.source_type,
+            redaction_count=notice.redaction_count,
+            long_number_count=len(re.findall(r"(?<!\d)\d{8,}(?!\d)", notice.text)),
+            parser_warnings=notice.parser_warnings,
+            attachments=notice.attachments,
+            text=notice.text,
+            approval={
+                "doc_id": notice.doc_id,
+                "text_sha256": text_sha256(notice),
+                "reviewer_id": "",
+                "reviewed_at": "",
+                "providers": [],
+                "privacy_cleared": False,
+                "provider_use_approved": False,
+            },
+        )
+        for notice in notices
+        if not has_privacy_clearance(notice, approvals)
+    ]
 
 
 def build_prompt(notice: Notice) -> str:

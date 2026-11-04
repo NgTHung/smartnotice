@@ -11,7 +11,12 @@ from smartnotice.collectors.local import collect_emails, save_source
 from smartnotice.collectors.web import WebCollector
 from smartnotice.demo import run_demo
 from smartnotice.io import read_jsonl, write_jsonl
-from smartnotice.labeling.llm import require_provider_approval
+from smartnotice.labeling.llm import (
+    has_privacy_clearance,
+    has_provider_approval,
+    privacy_review_queue,
+    require_provider_approval,
+)
 from smartnotice.labeling.pairs import build_pairs
 from smartnotice.labeling.providers import configured_model, load_local_env
 from smartnotice.labeling.studio import (
@@ -79,6 +84,17 @@ def main(argv: list[str] | None = None) -> None:
     suggest.add_argument(
         "--doc-id", action="append", help="Select an ID; repeat for several notices"
     )
+    suggest.add_argument(
+        "--selection",
+        type=Path,
+        help="JSONL with doc_id rows, such as a split file or failure ledger",
+    )
+    suggest.add_argument("--split", help="Use only --selection rows with this split value")
+    suggest.add_argument(
+        "--approved-only",
+        action="store_true",
+        help="Skip selected real notices without approval for this provider",
+    )
     suggest.add_argument("--provider", choices=["gemini", "featherless"], required=True)
     suggest.add_argument("--model", help="Override GEMINI_MODEL or FEATHERLESS_MODEL")
     suggest.add_argument(
@@ -101,6 +117,7 @@ def main(argv: list[str] | None = None) -> None:
         "split",
         "quality",
         "export-tasks",
+        "privacy-review-queue",
         "import-labels",
         "validate-labels",
         "build-pairs",
@@ -118,7 +135,17 @@ def main(argv: list[str] | None = None) -> None:
             )
         elif name == "export-tasks":
             command.add_argument(
+                "--approvals", type=Path, default=Path("data/annotations/provider_approvals.jsonl")
+            )
+            command.add_argument(
                 "--output", type=Path, default=Path("data/annotations/label_studio_tasks.json")
+            )
+        elif name == "privacy-review-queue":
+            command.add_argument(
+                "--approvals", type=Path, default=Path("data/annotations/provider_approvals.jsonl")
+            )
+            command.add_argument(
+                "--output", type=Path, default=Path("data/interim/privacy_review_queue.jsonl")
             )
         elif name == "import-labels":
             command.add_argument("--input", type=Path, required=True)
@@ -185,11 +212,32 @@ def main(argv: list[str] | None = None) -> None:
             notices = _load(args.notices, Notice)
             if len({n.doc_id for n in notices}) != len(notices):
                 raise ValueError("Notice document IDs must be unique")
-            requested = set(args.doc_id or [n.doc_id for n in notices])
+            if args.split and not args.selection:
+                raise ValueError("--split requires a --selection file")
+            requested = set(args.doc_id or [])
+            if args.selection:
+                requested |= {
+                    row["doc_id"]
+                    for row in read_jsonl(args.selection)
+                    if args.split is None or row.get("split") == args.split
+                }
+            elif not requested:
+                requested = {n.doc_id for n in notices}
             selected = [notice for notice in notices if notice.doc_id in requested]
             if not selected or requested != {n.doc_id for n in selected}:
                 raise ValueError("Selection contains no notices or unknown document IDs")
             approvals = read_jsonl(args.approvals) if args.approvals.exists() else []
+            if args.approved_only:
+                count = len(selected)
+                selected = [
+                    notice
+                    for notice in selected
+                    if has_provider_approval(notice, args.provider, approvals)
+                ]
+                requested = {notice.doc_id for notice in selected}
+                print(f"Skipped {count - len(selected)} unapproved notices", file=sys.stderr)
+                if not selected:
+                    raise ValueError("No selected notices are approved for this provider")
             for notice in selected:
                 require_provider_approval(notice, args.provider, approvals)
             load_local_env()
@@ -234,7 +282,22 @@ def main(argv: list[str] | None = None) -> None:
                 _json(args.output, report)
                 print(json.dumps(report, ensure_ascii=False, indent=2))
             elif args.command == "export-tasks":
-                _json(args.output, export_tasks(notices))
+                approvals = read_jsonl(args.approvals) if args.approvals.exists() else []
+                cleared = [n for n in notices if has_privacy_clearance(n, approvals)]
+                if not cleared:
+                    raise ValueError("No privacy-cleared notices; run privacy-review-queue")
+                _json(args.output, export_tasks(cleared))
+                print(
+                    f"Exported {len(cleared)} tasks; "
+                    f"held {len(notices) - len(cleared)} without privacy review: {args.output}"
+                )
+            elif args.command == "privacy-review-queue":
+                if args.output.resolve() in {args.approvals.resolve(), args.notices.resolve()}:
+                    raise ValueError("The review queue must not replace its inputs")
+                approvals = read_jsonl(args.approvals) if args.approvals.exists() else []
+                queue = privacy_review_queue(notices, approvals)
+                write_jsonl(args.output, [item.model_dump(mode="json") for item in queue])
+                print(f"{len(queue)} of {len(notices)} notices await review: {args.output}")
             elif args.command == "import-labels":
                 tasks = json.loads(args.input.read_text(encoding="utf-8-sig"))
                 annotations = import_tasks(tasks, notices)

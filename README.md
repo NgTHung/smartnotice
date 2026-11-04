@@ -39,7 +39,7 @@ uv run smartnotice collect-web "https://your-university.edu.vn/notice" --selecto
 uv run smartnotice prepare
 uv run smartnotice split
 uv run smartnotice quality
-uv run smartnotice export-tasks
+uv run smartnotice privacy-review-queue
 ```
 
 The URL above illustrates the command syntax. Choose a verified public notice and its actual selector before collection. The collector fetches explicit URLs; it does not discover links.
@@ -59,6 +59,12 @@ uv run smartnotice audit-email-policy path/to/emails --privacy-rules data/raw/pr
 ```
 
 This writes a private `allowed_emails.csv` with reasons and source counts, plus `audit_metadata.json` with source/configuration/code hashes. It prints aggregates only. The list is for review; it does not approve addresses for publication.
+
+`privacy-review-queue` writes a private worklist of prepared text that lacks human clearance. Complete each row's `approval` object after reading the text and add it to `data/annotations/provider_approvals.jsonl`. The [data contract](docs/interface.md#keep-model-suggestions-and-human-reviews-traceable) defines these records. Then export the cleared notices:
+
+```powershell
+uv run smartnotice export-tasks
+```
 
 Import the exported tasks and `data/annotations/label_studio.xml` into your Label Studio instance. Follow the [annotation protocol](docs/annotation.md) to convert completed annotations, review date normalization, and derive applicability labels. Raw sources and generated corpus files are excluded from Git. Review redacted text for remaining personal information before sharing it.
 
@@ -97,7 +103,7 @@ The installed Python package is `smartnotice`. The package mapping in `pyproject
 - [Course requirements](docs/assignment.md) and [original source documents](docs/reference/)
 - [Evaluation protocol](docs/evaluation.md)
 - [Dated implementation plan](docs/project-plan-2026-10-20.md)
-- [Validation record](reports/validation-2026-10-20.md)
+- [Validation record](reports/validation-2026-10-20.md) and [preparation handoff check](reports/validation-2026-11-04.md)
 - [Writing guide](docs/WRITING_GUIDE.md)
 
 Team names, student IDs, and submission URLs belong in the submission materials. No team identity or public deployment URL is supplied with this workspace.
