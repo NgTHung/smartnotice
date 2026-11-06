@@ -56,32 +56,7 @@ def export_prediction_task(
     if proposal.annotator_id != "model_prediction":
         raise ValueError("Only model proposals can be exported as predictions")
     task = export_tasks([notice])[0]
-    spans = {span.span_id: span for span in proposal.spans}
-    results = [
-        {
-            "id": span.span_id,
-            "from_name": "entities",
-            "to_name": "notice",
-            "type": "labels",
-            "value": {
-                "start": span.start,
-                "end": span.end,
-                "text": span.text,
-                "labels": [span.label],
-            },
-        }
-        for span in proposal.spans
-    ]
-    results.extend(
-        {
-            "type": "relation",
-            "from_id": event.action_span_id,
-            "to_id": argument.span_id,
-            "labels": [argument.role or spans[argument.span_id].label],
-        }
-        for event in proposal.events
-        for argument in event.arguments
-    )
+    results = annotation_results(proposal)
     task["predictions"] = [
         {"model_version": f"{provider}:{model}:{PROMPT_VERSION}", "result": results}
     ]
@@ -100,6 +75,91 @@ def export_prediction_task(
         max_output_tokens=MAX_OUTPUT_TOKENS,
     ).model_dump(mode="json")
     return task
+
+
+def annotation_results(annotation: Annotation) -> list[dict]:
+    """Serialize spans and relations without assigning a reviewer or review status.
+
+    Offsets remain Python code point offsets. Validate against the owning Notice
+    before calling; this function does not convert date or audience curation.
+    """
+    spans = {span.span_id: span for span in annotation.spans}
+    results = [
+        {
+            "id": span.span_id,
+            "from_name": "entities",
+            "to_name": "notice",
+            "type": "labels",
+            "value": {
+                "start": span.start,
+                "end": span.end,
+                "text": span.text,
+                "labels": [span.label],
+            },
+        }
+        for span in annotation.spans
+    ]
+    results.extend(
+        {
+            "type": "relation",
+            "from_id": event.action_span_id,
+            "to_id": argument.span_id,
+            "labels": [argument.role or spans[argument.span_id].label],
+        }
+        for event in annotation.events
+        for argument in event.arguments
+    )
+    return results
+
+
+def import_prediction_tasks(tasks: list[dict], notices: list[Notice]) -> list[Annotation]:
+    """Validate saved model proposals and return model-authored annotations.
+
+    Require exact source/text/prediction hashes and one prediction per task.
+    Reject duplicate IDs, unsupported results, unlinked spans, or completions.
+    No human completion, review ledger or privacy approval is created.
+    """
+    documents = {notice.doc_id: notice for notice in notices}
+    if len(documents) != len(notices):
+        raise ValueError("Prediction Notice IDs must be unique")
+    seen, output = set(), []
+    for task in tasks:
+        doc_id = task["data"]["doc_id"]
+        if doc_id in seen or doc_id not in documents:
+            raise ValueError(f"Duplicate or unknown prediction document: {doc_id}")
+        seen.add(doc_id)
+        notice = documents[doc_id]
+        predictions = task.get("predictions", [])
+        if len(predictions) != 1 or task.get("annotations"):
+            raise ValueError(f"Expected one model prediction without completions: {doc_id}")
+        provenance = ProposalProvenance.model_validate(task["data"].get("proposal", {}))
+        results = predictions[0]["result"]
+        if any(item["type"] not in {"labels", "relation"} for item in results):
+            raise ValueError(f"Unsupported prediction result: {doc_id}")
+        if (
+            provenance.raw_sha256 != notice.raw_sha256
+            or provenance.text_sha256 != text_sha256(notice)
+            or provenance.synthetic != notice.synthetic
+            or provenance.prediction_sha256 != json_sha256(_result_signature(results))
+        ):
+            raise ValueError(f"Prediction provenance mismatch: {doc_id}")
+        # The existing converter owns span/link rules; the adapter is in memory
+        # and carries explicit model authorship, never a human reviewer identity.
+        annotation = import_tasks(
+            [
+                {
+                    "data": task["data"],
+                    "annotations": [{"completed_by": "model_prediction", "result": results}],
+                }
+            ],
+            [notice],
+        )[0]
+        used = {event.action_span_id for event in annotation.events}
+        used.update(arg.span_id for event in annotation.events for arg in event.arguments)
+        if used != {span.span_id for span in annotation.spans}:
+            raise ValueError(f"Unlinked prediction spans: {doc_id}")
+        output.append(annotation)
+    return output
 
 
 def _result_signature(results: list[dict]) -> tuple:

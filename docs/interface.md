@@ -67,3 +67,23 @@ Generated pairs retain `doc_id`, event/profile IDs, original evidence text, prof
 Source threads and manually assigned template groups merge with exact/near text duplicates. Similarity uses normalized character sequences with the threshold passed to `split`; transitive matches form one group. The seeded allocator targets 70/15/15 by document count but cannot guarantee exact proportions or nonempty small splits.
 
 Any group containing a reserved web notice is removed from the ordinary pool. Its web documents receive `domain_test`; related email receives `excluded`. Each assignment records its `seed` and `similarity`. Persist assignments and review group merges before training. Synthetic flags travel with every notice and derived pair.
+
+## Exchange event grouping proposals
+
+`import_prediction_tasks` in `src/labeling/studio.py` validates saved prediction tasks against Notice text, source/text/prediction hashes and unique document IDs. It accepts one prediction per task and rejects human completions, unsupported results and unlinked spans. Returned Annotation objects have `annotator_id="model_prediction"`; conversion creates no human review record. `annotation_results` serializes an already validated Annotation into Label Studio spans and relations without assigning authorship or review status.
+
+`group_events` in `src/labeling/grouping.py` accepts unique Notice records and at most one validated Annotation per document. Its Pydantic records define a separate proposal format:
+
+| Record | Fields and guarantees |
+|---|---|
+| `GroupingConfig` | Token Jaccard candidate threshold in `(0, 1]`, default `0.8`; minimum shared informative tokens, default `3` |
+| `EventMention` | `doc_id:action_span_id` reference, document-local event ID, annotation origin, source/text hashes, exact ACTION, arguments, argument spans and evidence sentences |
+| `PairDecision` | Member references, Jaccard similarity, decision, rule reasons and whether both members reached the same tentative group |
+| `EventGroup` | Hash of sorted member references, member references and `review_required=true`; singleton groups are retained |
+| `GroupingResult` | Rule version, config, mentions, groups, candidate decisions and total pair comparison count |
+
+Decisions are `SAME_EVENT`, `DIFFERENT_EVENT`, `UNCLEAR` or `UPDATE_CANDIDATE`. Updates require target/direction review and do not merge automatically. Similarity is a text-overlap score, not a probability. Noncandidate pairs are omitted from decisions; their omission is not a reviewed negative label. Input order does not change the result. Group IDs change when membership changes; they are not permanent external event identifiers.
+
+`tools/run_event_grouping.py` requires matching Notice and prediction document sets and validates them before creating a new output directory. It writes `events.jsonl`, `groups.jsonl`, `pair_decisions.jsonl`, `review_groups.md`, `run.json` and `checksums.json` under private generated storage. Source predictions, text, offsets and evaluation split assignments remain unchanged. Run metadata records parameters, source/code/lock hashes, environment, timings and workflow counts. The [grouping procedure](event-grouping.md) owns decision rules and limitations.
+
+The local `hien.json` sample follows the supplied Label Studio export's task/annotation/result layout, including `entities`/`notice` bindings and ACTION-to-argument relations. Its AI annotations have `completed_by=null`, `ground_truth=false`, `data.draft_origin="ai_assistant_source_reading"` and explicit AI origin in `meta`; no Label Studio user/project identity or human completion is asserted. This file is an assistant draft for further review. It does not satisfy the `import-reviewed-labels` human-review contract. A sidecar preserves canonical AI annotations, the seeded document selection, curation notes and source hashes.

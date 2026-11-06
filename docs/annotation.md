@@ -25,6 +25,8 @@ The converter checks canonical text, imports typed spans and links, and assigns 
 
 Use consistent codes such as `K24`, `CNTT`, and `CLC`. Resolve abbreviations from the source context and record adjudication decisions in an annotation log. Set `implicit=true` for an audience inferred from unstated context. The constraint matcher cannot resolve arbitrary Boolean conditions or calendar expressions.
 
+For a development sample of repeated event mentions, follow the [event grouping criteria](event-grouping.md). Keep AI pair proposals separate from human decisions and retain every source mention when proposing a group.
+
 ## Generate applicability examples
 
 ```powershell

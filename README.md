@@ -76,6 +76,14 @@ uv run smartnotice suggest-labels --notices data/interim/demo/notices.jsonl --do
 
 Run the demo first to prepare that fixture. The [LLM labeling procedure](docs/llm-labeling.md) explains `.env` configuration, batch selection, real-data approval, Label Studio review, and verified import with `import-reviewed-labels`.
 
+To try grouping events from the saved local prediction batch:
+
+```powershell
+uv run python tools/run_event_grouping.py
+```
+
+The [event grouping procedure](docs/event-grouping.md) defines the input paths, tentative groups, abstentions, and review requirements. The command refuses an existing output directory; pass a new `--output-dir` for another run.
+
 ## Find the files
 
 | Path | Purpose |
