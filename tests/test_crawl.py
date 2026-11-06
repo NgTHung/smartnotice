@@ -16,6 +16,7 @@ from smartnotice.collectors.hcmus import (
     parse_detail,
     selection_reason,
 )
+from smartnotice.collectors.sources import SOURCES, next_listing
 from smartnotice.collectors.web import CollectionPolicyError, WebCollector
 from smartnotice.io import read_jsonl
 from smartnotice.schemas import CrawlIndex, CrawlLog, CrawlSummary, Notice
@@ -68,6 +69,68 @@ def client_for(pages, requests):
         return httpx.Response(200, content=value, headers={"content-type": "text/html"})
 
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.parametrize("source", ["uit-student", "ueh-training", "ueh-student"])
+def test_university_pagination_and_preparation(tmp_path, source):
+    adapter = SOURCES[source]
+    origin = WebCollector.origin(adapter.listing_url)
+
+    def archive(path, next_url=""):
+        heading = "h3" if source == "ueh-student" else "h2"
+        link = f'<{heading}><a href="{path}">Thông báo đăng ký học bổng</a></{heading}>'
+        return (
+            f'<div id="content"><div class="jet-listing-grid__item">{link}</div>'
+            f'<li class="pager-next"><a class="next page-numbers" href="{next_url}">'
+            "next</a></li></div>"
+        ).encode()
+
+    first = archive("/bai-viet/one", "?page=1")
+    second_url = next_listing(first, adapter.listing_url, adapter, 1)
+
+    def article(number):
+        return (
+            f'<meta charset="utf-8"><h1 class="page-title" id="page-title">Đăng ký học bổng</h1>'
+            '<div class="elementor-element-5906742"><h2>Đăng ký học bổng</h2></div>'
+            '<article><div class="submitted">Mon, 19/10/2026 - 08:27</div></article>'
+            '<article><div class="field-name-body elementor-widget-theme-post-content bs-desc">'
+            f"Sinh viên đăng ký học bổng đợt {number} trước ngày 30/11.</div></article>"
+        ).encode()
+
+    pages = {
+        adapter.listing_url: first,
+        second_url: archive("/bai-viet/two"),
+        origin + "/bai-viet/one": article(1),
+        origin + "/bai-viet/two": article(2),
+    }
+    requests = []
+    with client_for(pages, requests) as client:
+        summary = crawl_web(
+            WebCollector(client),
+            tmp_path / source,
+            source=source,
+            max_pages=2,
+            limit=2,
+            max_candidates=2,
+        )
+    assert summary.complete and summary.source == source
+    assert requests.count(second_url) == 1
+    rows = read_jsonl(tmp_path / source / "index.jsonl")
+    assert {r["institution"] for r in rows} == {adapter.institution}
+    assert all(r["reference_date"] is None for r in rows)
+    notices = read_jsonl(tmp_path / source / "prepared/notices.jsonl")
+    assert len(notices) == 2
+    assert all("next" not in n["text"] for n in notices)
+
+
+def test_pagination_rejects_external_origin():
+    with pytest.raises(ValueError, match="origin"):
+        next_listing(
+            b'<li class="pager-next"><a href="https://other.test/">next</a></li>',
+            SOURCES["uit-student"].listing_url,
+            SOURCES["uit-student"],
+            1,
+        )
 
 
 @pytest.mark.parametrize(
@@ -441,3 +504,126 @@ def test_full_task_is_kept_when_separate_paragraph_links_to_a_form():
     )
     assert "nộp hồ sơ trước 30/10" in result.text
     assert "attachment_context_review" in result.warnings
+
+
+def test_policy_mention_does_not_exclude_registration_notice():
+    assert selection_reason("Thông báo đăng ký ngoại ngữ theo quy định mới") == "eligible"
+
+
+def test_mixed_attachment_paragraph_retains_explicit_task():
+    parsed = parse_detail(
+        detail(body="Sinh viên K24 nộp hồ sơ trước ngày 30/10/2026; mẫu đơn trong file đính kèm.")
+    )
+    assert "nộp hồ sơ" in parsed.text
+    assert "attachment_context_review" in parsed.warnings
+
+
+def test_collection_stops_before_unneeded_listing_page(tmp_path):
+    adapter = SOURCES["uit-student"]
+    raw = (
+        '<div id="content"><a href="/bai-viet/one">Đăng ký học bổng</a></div>'
+        '<li class="pager-next"><a href="?page=1">next</a></li>'
+    ).encode()
+    article = (
+        '<meta charset="utf-8"><h1 id="page-title">Đăng ký học bổng</h1>'
+        '<article><div class="field-name-body">Sinh viên đăng ký học bổng '
+        "trước ngày 30/11/2026.</div></article>"
+    ).encode()
+    requests = []
+    pages = {adapter.listing_url: raw, "https://ctsv.uit.edu.vn/bai-viet/one": article}
+    with client_for(pages, requests) as client:
+        result = crawl_web(
+            WebCollector(client),
+            tmp_path / "stop-early",
+            source="uit-student",
+            limit=1,
+            max_candidates=40,
+            max_pages=40,
+        )
+    assert result.complete
+    assert not any("?page=" in url for url in requests)
+
+
+def test_attachment_reference_does_not_hide_explicit_deadline_task():
+    parsed = parse_detail(
+        detail(
+            body="Sinh viên K24 nộp hồ sơ trước ngày 30/10/2026 theo mẫu đơn trong file đính kèm."
+        )
+    )
+    assert "nộp hồ sơ" in parsed.text
+    assert "attachment_context_review" in parsed.warnings
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Cảnh báo lừa đảo học bổng",
+        "Thông tin giải đáp thắc mắc về tốt nghiệp",
+        "Quyết định cấp học bổng học tập",
+    ],
+)
+def test_non_task_genres_are_excluded(title):
+    assert selection_reason(title) == "excluded_title"
+
+
+def test_staff_administration_is_not_a_student_task():
+    with pytest.raises(NoticeRejected, match="staff_administration"):
+        parse_detail(
+            detail(
+                title="Đánh giá cố vấn học tập",
+                body=(
+                    "Nhiệm vụ của các đơn vị: Phòng CTSV nộp báo cáo. "
+                    "Các khoa thực hiện đánh giá cán bộ."
+                ),
+            )
+        )
+
+
+def test_contribution_is_not_tuition_payment_action():
+    with pytest.raises(NoticeRejected, match="attachment_only_or_no_action_prose"):
+        parse_detail(
+            detail(
+                title="Thông tin tốt nghiệp",
+                body=("Nhà trường trân trọng những đóng góp của sinh viên cho thành công chung."),
+            )
+        )
+
+
+def test_ueh_publication_date_in_page_heading_outside_article():
+    adapter = SOURCES["ueh-student"]
+    raw = (
+        "<meta charset='utf-8'><header><li class='bs-date'><span>04/11/2026</span></li></header>"
+        "<h1 class='page-title'>Đăng ký học bổng</h1><article><div class='bs-desc'>"
+        "Sinh viên nộp hồ sơ học bổng trước ngày 20/11/2026.</div></article>"
+    ).encode()
+    parsed = parse_detail(
+        raw,
+        body_selector=adapter.body_selector,
+        title_selector=adapter.title_selector,
+        date_selector=adapter.date_selector,
+    )
+    assert str(parsed.date_candidate) == "2026-11-04"
+    assert parsed.date_status == "unverified"
+
+
+def test_personal_roster_is_rejected_even_when_title_looks_like_a_task():
+    roster = (
+        "<p>Sinh viên nộp học phí trước ngày 30/11/2026.</p>"
+        "<table><tr><td>MSSV</td><td>HỌ TÊN</td></tr>"
+        "<tr><td>123456XX</td><td>Người A</td></tr>"
+        "<tr><td>123457XX</td><td>Người B</td></tr></table>"
+    )
+    with pytest.raises(NoticeRejected, match="personal_roster"):
+        parse_detail(detail(title="Bổ sung gia hạn học phí", body=roster))
+
+
+def test_empty_application_form_is_not_a_personal_roster():
+    parsed = parse_detail(
+        detail(
+            body=(
+                "<p>Sinh viên nộp hồ sơ trước ngày 30/11.</p>"
+                "<table><tr><td>MSSV</td><td>HỌ TÊN</td></tr><tr><td></td><td></td></tr></table>"
+            )
+        )
+    )
+    assert "nộp hồ sơ" in parsed.text

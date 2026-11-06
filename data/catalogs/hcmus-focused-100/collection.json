@@ -1,0 +1,41 @@
+{
+  "version": "hcmus-focused-100-20261106",
+  "collected_on": "2026-11-06",
+  "source_counts": {
+    "HCMUS": 40,
+    "UIT": 30,
+    "UEH": 30
+  },
+  "candidate_budget_per_source": 300,
+  "listing_page_budget_per_source": 40,
+  "interval_seconds": 2,
+  "minimum_characters_warning_threshold": 100,
+  "sampling": "listing order; academic-title + independent-task filter; no year cutoff",
+  "source_catalog_sha256": "9b0d9f84e41b8afbc6a4ecfb926b997239402445eec847226bb15cea8a9e25fb",
+  "source_file_sha256": {
+    "uv.lock": "9579c05dcdcd3319fd08644c3aedf0321c15f9d04ffdf13a9b50d00bdaa97941",
+    "src/collectors/crawl.py": "18954521da06dba19d6d0330bba86ea8c9271dc45fd0ba6e5869a0a468909b2e",
+    "src/collectors/hcmus.py": "ecf4f734d0a36ede0f4ca21532d05b6f9c19c63e7b71c65741c71b6013e5fecf",
+    "src/collectors/sources.py": "0097904fc7d1a24164bc57caf2244c4d2e1606cd226182cd6fe42c127c235db5",
+    "src/collectors/web.py": "4a8ef2cabb5a09f8432c208d13e319efe79cb2ed24d2afae69c168f5f26dbf16",
+    "src/collectors/dataset.py": "7a36e05b5f44ed67b8ec32758a6ddad42aa5c10f1388a60986c544f80cd4603b",
+    "src/parsers/html.py": "7994a729616afba92ff1c02fbe0f7e79beefae035c20e2187740014094b33504",
+    "src/preprocessing/text.py": "aa2961a4eaf522cb7cb1446db464dfad99c1ed3a400317d5fb680bb4615b5541",
+    "pyproject.toml": "e6ad315160e0f922aa495952b71cc209d52d480b5bd7f1f22d183c1b8543139e",
+    "src/io.py": "133b1e69ed2566efbd0b2bc2147d8db6ee96f0555b1d088b3396487a1c6254eb",
+    "src/schemas.py": "5f7fe6bd81dbe60d0e49dd7ea727c2072f1de376073be2be9fe5d8b6a5b5ee22",
+    "src/collectors/local.py": "5e3865e4cb6ab7b08d336bb48b91057ffcdab8bac6ed2648c211b60e75b2a6d5",
+    "src/preprocessing/pipeline.py": "75c748e5ce1d52c7d8ddcda0037fad5354e2face4dc28ebd692f2996c889f621",
+    "tools/crawl_universities.py": "b8c7c48528b0e943fbf408ae979fdc39910a6ff3f3b30761e58dac4c5141aeff",
+    "tools/check_notice_dataset.py": "25e788c41455e5b77315f9bc0de82b70fecb890c3b70eee899986902ed9b6b6c",
+    "tools/fetch_notice_catalog.py": "78c94388f6bbe14eed4a06c1c6c6e88943561f9dd270adcd0de2bf35af502fd6"
+  },
+  "scope_refinement_exclusions": 7,
+  "human_privacy_review_complete": false,
+  "human_date_review_complete": false,
+  "annotations_complete": false,
+  "split_assigned": false,
+  "validation_command": "uv run python tools/check_notice_dataset.py --run-dir data/raw/crawls/hcmus-focused-100-20261106",
+  "checked_at": "2026-11-06T12:27:50.209648+00:00",
+  "hash_text_normalization": "UTF-8 with LF newlines, matching Git text normalization"
+}

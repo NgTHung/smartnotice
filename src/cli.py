@@ -50,10 +50,15 @@ def main(argv: list[str] | None = None) -> None:
     web.add_argument("--domain-holdout", action="store_true")
     web.add_argument("--interval", type=float, default=2.0)
     web.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
-    crawl = commands.add_parser("crawl-web", help="Discover and collect a bounded HCMUS pilot")
-    crawl.add_argument("--source", choices=["hcmus-student"], default="hcmus-student")
+    crawl = commands.add_parser("crawl-web", help="Discover and collect a bounded university pilot")
+    crawl.add_argument(
+        "--source",
+        choices=["hcmus-student", "uit-student", "ueh-training", "ueh-student"],
+        default="hcmus-student",
+    )
     crawl.add_argument("--run-id", required=True, help="New run folder name; letters/digits/_/-")
     crawl.add_argument("--output-root", type=Path, default=Path("data/raw/crawls"))
+    crawl.add_argument("--max-pages", type=int, default=1)
     crawl.add_argument("--limit", type=int, default=10)
     crawl.add_argument("--max-candidates", type=int, default=40)
     crawl.add_argument("--min-chars", type=int, default=100, help="Flag shorter text for review")
@@ -127,6 +132,8 @@ def main(argv: list[str] | None = None) -> None:
                 result = crawl_web(
                     WebCollector(client, args.interval),
                     args.output_root / run_id,
+                    source=args.source,
+                    max_pages=args.max_pages,
                     limit=args.limit,
                     max_candidates=args.max_candidates,
                     min_chars=args.min_chars,

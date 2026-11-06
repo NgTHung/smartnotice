@@ -22,6 +22,28 @@ class CrawlCandidate(Record):
     selection_reason: str
 
 
+class NoticeCatalogEntry(Record):
+    """Share a frozen source identity and hashes without article text or contacts."""
+
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    source: Literal["hcmus-student", "uit-student", "ueh-student"]
+    institution: Literal["HCMUS", "UIT", "UEH"]
+    url: str
+    selector: str
+    raw_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    prepared_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    characters: int = Field(gt=0)
+    publication_date_candidate: date | None
+    publication_date_status: Literal["unverified", "missing", "invalid", "conflict"]
+
+    @model_validator(mode="after")
+    def check_identity(self):
+        """Reject a source identity inconsistent with its immutable raw hash."""
+        if self.doc_id != self.raw_sha256[:20]:
+            raise ValueError("Catalog identity does not match its raw hash")
+        return self
+
+
 class CrawlIndex(Record):
     """Connect an accepted source snapshot to its prepared text and pending reviews."""
 
@@ -31,7 +53,7 @@ class CrawlIndex(Record):
     url: str
     title: str
     listing_title: str
-    institution: Literal["HCMUS"] = "HCMUS"
+    institution: Literal["HCMUS", "UIT", "UEH"] = "HCMUS"
     raw_path: str
     snapshot_path: str
     selector: str
@@ -65,7 +87,7 @@ class CrawlSummary(Record):
     """Report software collection counts, separate from human review or model quality."""
 
     run_id: str
-    source: Literal["hcmus-student"] = "hcmus-student"
+    source: Literal["hcmus-student", "uit-student", "ueh-training", "ueh-student"] = "hcmus-student"
     listing_url: str
     started_at: datetime
     finished_at: datetime | None = None
@@ -73,6 +95,7 @@ class CrawlSummary(Record):
     complete: bool = False
     target: int = Field(gt=0)
     max_candidates: int = Field(gt=0)
+    max_pages: int = Field(default=1, gt=0)
     interval_seconds: float = Field(ge=1)
     short_text_threshold: int = Field(gt=0)
     domain_holdout: bool

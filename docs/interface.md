@@ -19,11 +19,11 @@ A prepared Notice contains the SHA-256 of the source bytes, a `doc_id` from its 
 | Record/file | Persisted fields and meaning |
 |---|---|
 | `CrawlCandidate`, `candidates.jsonl` | `url`, `title`, `selection_reason`; unique links in listing order, including title exclusions |
-| `CrawlIndex`, `index.jsonl` | `doc_id`, `raw_sha256`, `requested_url`, final `url`, article/listing titles, `institution`, `raw_path`, `snapshot_path`, `selector`, `characters`, and `prepared_text_sha256` |
+| `CrawlIndex`, `index.jsonl` | `doc_id`, `raw_sha256`, `requested_url`, final `url`, article/listing titles, `institution` (`HCMUS`, `UIT`, or `UEH`), `raw_path`, `snapshot_path`, `selector`, `characters`, and `prepared_text_sha256` |
 | Index date evidence | `publication_date_candidate`, `publication_date_display`, `published_time_metadata`, `publication_date_status`, `reference_date`, and `date_review_required` |
 | Index review metadata | `privacy_review_required`, `content_review_required`, and `warnings`; automated output leaves all review requirements true |
 | `CrawlLog`, `crawl_log.jsonl` | `kind` (`listing`, `detail`, `preparation`), requested/final URLs, `status` (`fetched`, `accepted`, `skipped`, `failed`), `reason`, optional snapshot path, accepted `doc_id`, or `duplicate_of` |
-| `CrawlSummary`, `summary.json` | Run ID/source/listing, UTC start/finish times, status/completion, target, candidate budget, request interval, short-text threshold, holdout flag, discovered/eligible/attempted/accepted counts, unique-text and pending-review counts, outcome counts, and optional error |
+| `CrawlSummary`, `summary.json` | Run ID/source/listing, UTC start/finish times, status/completion, target, candidate budget, `max_pages`, request interval, short-text threshold, holdout flag, discovered/eligible/attempted/accepted counts, unique-text and pending-review counts, outcome counts, and optional error |
 
 All crawler models reject unknown fields. Paths in the index/log resolve relative to the run directory. `raw_sha256` hashes HTTP-decoded HTML bytes; the prepared-text hash covers NFC-normalized, automatically redacted UTF-8 text. `doc_id` retains the existing first-20-hex source-hash rule. Deduplication counts identical prepared text once within a run while preserving other downloaded URL outcomes in the log. Missing detail snapshots for HTTP errors or non-HTML responses are expected.
 
@@ -58,3 +58,14 @@ Generated pairs retain `doc_id`, event/profile IDs, original evidence text, prof
 Source threads and manually assigned template groups merge with exact/near text duplicates. Similarity uses normalized character sequences with the threshold passed to `split`; transitive matches form one group. The seeded allocator targets 70/15/15 by document count but cannot guarantee exact proportions or nonempty small splits.
 
 Any group containing a reserved web notice is removed from the ordinary pool. Its web documents receive `domain_test`; related email receives `excluded`. Persist assignments and review group merges before training. Synthetic flags travel with every notice and derived pair.
+
+University source IDs are `hcmus-student`, `uit-student`, `ueh-student`, and `ueh-training`. The multi-university tool writes the same index and Notice records in combined files; index paths include the source subfolder prefix. Raw manifests remain per source. Its combined summary records target, unique accepted count, institution counts, completion, errors and pending review flags. A complete multi-university run requires 100 distinct prepared-text hashes and no source errors.
+
+
+## Share a source catalog
+
+`NoticeCatalogEntry` records `doc_id`, `source`, `institution`, public `url`, body `selector`, `raw_sha256`, `prepared_text_sha256`, `characters`, `publication_date_candidate` and `publication_date_status`. Unknown fields are rejected. Hash fields contain 64 lowercase hexadecimal characters, and `doc_id` is the first 20 characters of the raw hash. Article bodies, titles, names, contact data and machine-local paths are absent.
+
+The HCMUS-focused batch requires 40 HCMUS, 30 UIT and 30 UEH records. No source quota is silently reassigned. `complete=true` requires exact source quotas, 100 distinct prepared texts, successful source runs and corpus validation. Metadata export independently reruns validation before replacing a catalog.
+
+Catalog reconstruction writes a new local `raw/manifest.jsonl`, source snapshots, `prepared/notices.jsonl`, `provenance.jsonl` and `summary.json`. Provenance records map `catalog_doc_id` to the fetched `doc_id`, institution, final URL, raw hash, raw-hash-match flag and expected prepared-text hash. Rebuilt raw hashes may differ due to HTML changes; prepared text must match exactly or the reconstruction fails. All human-review requirements remain pending, and no original publication date is automatically promoted to `reference_date`.

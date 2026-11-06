@@ -1,0 +1,20 @@
+{
+  "validated_documents": 100,
+  "institutions": {
+    "HCMUS": 40,
+    "UIT": 30,
+    "UEH": 30
+  },
+  "unique_prepared_texts": 100,
+  "date_status_counts": {
+    "unverified": 100
+  },
+  "warning_counts": {
+    "attachment_context_review": 10,
+    "merged_table_cells": 11
+  },
+  "human_privacy_review_complete": false,
+  "human_date_review_complete": false,
+  "annotations_present": false,
+  "documents_with_privacy_pattern_findings": 1
+}

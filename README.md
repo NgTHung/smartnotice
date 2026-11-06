@@ -42,11 +42,30 @@ uv run smartnotice export-tasks
 
 The URL above illustrates the command syntax. Choose a verified public notice and its actual selector before collection. `collect-web` fetches an explicit URL.
 
-Discover and collect a pilot from the HCMUS student listing:
+Discover and collect a pilot from a university listing:
 
 ```powershell
 uv run smartnotice crawl-web --source hcmus-student --limit 10 --max-candidates 40 --run-id hcmus-pilot-001
 ```
+
+Collect an HCMUS-focused pilot of 100 notices (40 HCMUS, 30 UIT, 30 UEH):
+
+```powershell
+uv run python tools/crawl_universities.py --run-id hcmus-focused-100-001
+```
+
+The default allocation is fixed at 40/30/30. `--limits` can set another allocation totaling 100. The sources run concurrently with separate per-origin request spacing; missing HCMUS samples never move automatically to another institution.
+
+The combined `index.jsonl`, `prepared/notices.jsonl`, and `summary.json` live in the run folder. Each source subfolder preserves its own manifest, snapshots, and logs. Cross-source identical prepared texts count once; an insufficient unique total remains incomplete. For one source, `crawl-web --source uit-student` or `--source ueh-student` accepts `--max-pages 30` to follow multiple listings.
+
+The checked source catalog for the shared pilot is [data/catalogs/hcmus-focused-100](data/catalogs/hcmus-focused-100/README.md). Rebuild its texts locally, or validate a newly collected batch:
+
+```powershell
+uv run python tools/fetch_notice_catalog.py --catalog data/catalogs/hcmus-focused-100/sources.jsonl --run-id team-copy-001
+uv run python tools/check_notice_dataset.py --run-dir data/raw/crawls/hcmus-focused-100-001
+```
+
+The catalog shares URLs and hashes. Real HTML and article text stay in ignored local storage pending human review. The catalog README explains raw-ID mappings, source changes, privacy, annotation, and the project's larger data targets.
 
 Choose a new `--run-id` for every run. Outputs live under `data/raw/crawls/<run-id>/`: inspect `summary.json`, `index.jsonl`, `crawl_log.jsonl`, and `prepared/notices.jsonl`. Exit codes are 0 for the collection target reached, 2 for too few usable candidates, 1 for failure, and 130 for interruption. Invalid CLI syntax also exits 2 before a run starts. Completion does not certify human review. The [collection protocol](docs/collection.md) explains source selection, pending dates, recovery, and privacy review; the [crawler reference](docs/crawler.md) explains implementation and limitations.
 
@@ -67,7 +86,7 @@ Import the exported tasks and `data/annotations/label_studio.xml` into your Labe
 | `data/interim/` | Redacted notices, reference dates, and sentence offsets |
 | `data/processed/` | Grouped split assignments and silver applicability pairs |
 | `data/annotations/` | Label Studio configuration and canonical annotation examples |
-| `src/collectors/` | Consented email import, robots-aware HTTP, and bounded HCMUS discovery |
+| `src/collectors/` | Consented email import, robots-aware HTTP, and bounded university discovery |
 | `src/parsers/` | MIME body extraction and HTML table conversion |
 | `src/preprocessing/` | Privacy filtering, segmentation, date helpers, and grouped splitting |
 | `src/labeling/` | Annotation validation, Label Studio exchange, and audience rules |

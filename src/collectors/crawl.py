@@ -4,24 +4,24 @@ import hashlib
 import json
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
+from itertools import islice
 from pathlib import Path
 
 import httpx
 from smartnotice.collectors.hcmus import (
-    BODY_SELECTOR,
-    LIST_URL,
     NoticeRejected,
     discover_links,
     parse_detail,
 )
 from smartnotice.collectors.local import save_source
+from smartnotice.collectors.sources import SOURCES, next_listing
 from smartnotice.collectors.web import UnsupportedContentError, WebCollector
 from smartnotice.io import write_jsonl
 from smartnotice.preprocessing.pipeline import prepare
 from smartnotice.preprocessing.text import normalize_and_redact
-from smartnotice.schemas import CrawlIndex, CrawlLog, CrawlSummary, Record
+from smartnotice.schemas import CrawlCandidate, CrawlIndex, CrawlLog, CrawlSummary, Record
 
 
 def validate_run_id(run_id: str) -> str:
@@ -75,6 +75,8 @@ def crawl_web(
     run_dir: Path,
     *,
     limit: int = 10,
+    source: str = "hcmus-student",
+    max_pages: int = 1,
     max_candidates: int = 40,
     min_chars: int = 100,
     domain_holdout: bool = False,
@@ -82,7 +84,8 @@ def crawl_web(
 ) -> CrawlSummary:
     """Collect unique academic HTML notices into a new, private run directory.
 
-    Try at most max_candidates eligible links from one listing, in DOM order.
+    Try at most max_candidates eligible links across max_pages listing pages.
+    source selects a configured university adapter; discovery preserves DOM order.
     min_chars only flags short text. Dates remain unverified candidates in the
     index and null in the raw manifest. Return complete/partial after preparing
     accepted sources; raise on policy, network, storage or unexpected failures.
@@ -92,47 +95,77 @@ def crawl_web(
     validate_run_id(run_dir.name)
     if limit < 1 or max_candidates < limit or min_chars < 1:
         raise ValueError("Require limit >= 1, max-candidates >= limit, and min-chars >= 1")
+    if source not in SOURCES or max_pages < 1:
+        raise ValueError("Require a supported source and max-pages >= 1")
+    adapter = SOURCES[source]
+    listing_url = adapter.listing_url
     run_dir.mkdir(parents=True, exist_ok=False)
     index: list[CrawlIndex] = []
     log: list[CrawlLog] = []
     summary = CrawlSummary(
         run_id=run_dir.name,
-        listing_url=LIST_URL,
+        source=source,
+        listing_url=listing_url,
         started_at=datetime.now(UTC),
         target=limit,
         max_candidates=max_candidates,
+        max_pages=max_pages,
         interval_seconds=collector.interval,
         short_text_threshold=min_chars,
         domain_holdout=domain_holdout,
     )
-    kind, active_url, final_url, snapshot = "listing", LIST_URL, None, None
+    kind, active_url, final_url, snapshot = "listing", listing_url, None, None
     text_hashes: dict[str, str] = {}
     try:
         _atomic_text(run_dir / "raw/manifest.jsonl", "")
         _checkpoint(run_dir, summary, index, log)
-        raw, final_url = collector.fetch(LIST_URL, allowed_origin=LIST_URL)
-        snapshot = _snapshot(run_dir, raw)
-        log.append(
-            CrawlLog(
-                kind="listing",
-                requested_url=LIST_URL,
-                url=final_url,
-                status="fetched",
-                reason="listing_fetched",
-                snapshot_path=snapshot,
-            )
-        )
-        candidates = discover_links(raw, final_url)
-        _records(run_dir / "candidates.jsonl", candidates)
-        summary.discovered_links = len(candidates)
-        eligible = [row for row in candidates if row.selection_reason == "eligible"]
-        summary.eligible_candidates = len(eligible)
-        _checkpoint(run_dir, summary, index, log)
-        for candidate in eligible[:max_candidates]:
+
+        def eligible_candidates() -> Iterator[CrawlCandidate]:
+            nonlocal kind, active_url, final_url, snapshot
+            candidates: list[CrawlCandidate] = []
+            seen_urls: set[str] = set()
+            visited: set[str] = set()
+            page_url: str | None = listing_url
+            for page in range(1, max_pages + 1):
+                if not page_url or page_url in visited:
+                    break
+                kind, active_url, final_url, snapshot = "listing", page_url, None, None
+                raw, final_url = collector.fetch(page_url, allowed_origin=listing_url)
+                visited.add(page_url)
+                visited.add(final_url)
+                snapshot = _snapshot(run_dir, raw)
+                log.append(
+                    CrawlLog(
+                        kind="listing",
+                        requested_url=page_url,
+                        url=final_url,
+                        status="fetched",
+                        reason="listing_fetched",
+                        snapshot_path=snapshot,
+                    )
+                )
+                discovered = discover_links(raw, final_url, link_selector=adapter.link_selector)
+                fresh = [row for row in discovered if row.url not in seen_urls]
+                candidates.extend(fresh)
+                seen_urls.update(row.url for row in fresh)
+                _records(run_dir / "candidates.jsonl", candidates)
+                summary.discovered_links = len(candidates)
+                summary.eligible_candidates = sum(
+                    r.selection_reason == "eligible" for r in candidates
+                )
+                _checkpoint(run_dir, summary, index, log)
+                if not fresh:
+                    break
+                # Resolve paging before yielding: detail fetches update the outer URL state.
+                following = next_listing(raw, final_url, adapter, page)
+                yield from (row for row in fresh if row.selection_reason == "eligible")
+                page_url = following
+
+        for candidate in islice(eligible_candidates(), max_candidates):
             kind, active_url, final_url, snapshot = "detail", candidate.url, None, None
             summary.attempted_details += 1
             try:
-                raw, final_url = collector.fetch(active_url, allowed_origin=LIST_URL)
+                raw, final_url = collector.fetch(active_url, allowed_origin=listing_url)
             except httpx.HTTPStatusError as exc:
                 if exc.request.url.path != "/robots.txt" and exc.response.status_code in {404, 410}:
                     log.append(
@@ -160,7 +193,12 @@ def crawl_web(
                 continue
             snapshot = _snapshot(run_dir, raw)
             try:
-                detail = parse_detail(raw)
+                detail = parse_detail(
+                    raw,
+                    body_selector=adapter.body_selector,
+                    title_selector=adapter.title_selector,
+                    date_selector=adapter.date_selector,
+                )
             except NoticeRejected as exc:
                 log.append(
                     CrawlLog(
@@ -197,6 +235,7 @@ def crawl_web(
             if len(text) < min_chars:
                 warnings.append("short_text")
             row = CrawlIndex(
+                institution=adapter.institution,
                 doc_id=raw_digest[:20],
                 raw_sha256=raw_digest,
                 requested_url=active_url,
@@ -205,7 +244,7 @@ def crawl_web(
                 listing_title=candidate.title,
                 raw_path=f"raw/{raw_digest}.html",
                 snapshot_path=snapshot,
-                selector=BODY_SELECTOR,
+                selector=adapter.body_selector,
                 characters=len(text),
                 prepared_text_sha256=digest,
                 publication_date_candidate=detail.date_candidate,
@@ -219,7 +258,7 @@ def crawl_web(
                 run_dir / "raw",
                 "web",
                 url=final_url,
-                selector=BODY_SELECTOR,
+                selector=adapter.body_selector,
                 reference_date=None,
                 group_id=group_id,
                 domain_holdout=domain_holdout,
@@ -240,7 +279,7 @@ def crawl_web(
             _checkpoint(run_dir, summary, index, log)
             if len(index) == limit:
                 break
-        kind, active_url, final_url, snapshot = "preparation", LIST_URL, None, None
+        kind, active_url, final_url, snapshot = "preparation", listing_url, None, None
         notices = prepare(run_dir / "raw/manifest.jsonl", run_dir / "prepared/notices.jsonl")
         if len(notices) != len(index):
             raise ValueError("Prepared notice count differs from the selected index")

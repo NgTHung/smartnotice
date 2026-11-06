@@ -44,7 +44,16 @@ _ACADEMIC_TERMS = (
     "anh văn",
     "ngoại ngữ",
 )
-_EXCLUDED_TERMS = ("danh sách", "kết quả", "quy chế", "quy định", "chúc mừng", "thư mời")
+_EXCLUDED_TERMS = ("danh sách", "kết quả", "chúc mừng", "thư mời")
+_POLICY_PREFIXES = (
+    "quy chế",
+    "quy định",
+    "ban hành quy chế",
+    "ban hành quy định",
+    "quyết định",
+    "cảnh báo",
+    "thông tin giải đáp",
+)
 _ACTIONS = (
     "đăng ký",
     "nộp",
@@ -57,7 +66,8 @@ _ACTIONS = (
     "đề nghị",
     "khảo sát",
     "tham gia",
-    "đóng",
+    "đóng học phí",
+    "đóng phí",
     "thanh toán",
     "kiểm tra",
     "phản hồi",
@@ -107,14 +117,16 @@ def selection_reason(title: str) -> str:
     Every accepted notice still requires human content review.
     """
     title = unicodedata.normalize("NFC", title).casefold()
-    if any(term in title for term in _EXCLUDED_TERMS):
+    if any(term in title for term in _EXCLUDED_TERMS) or title.startswith(_POLICY_PREFIXES):
         return "excluded_title"
     if not any(term in title for term in _ACADEMIC_TERMS):
         return "outside_academic_scope"
     return "eligible"
 
 
-def discover_links(raw: bytes, base_url: str) -> list[CrawlCandidate]:
+def discover_links(
+    raw: bytes, base_url: str, *, link_selector: str = LINK_SELECTOR
+) -> list[CrawlCandidate]:
     """Return unique same-origin links in DOM order, preserving identifying queries.
 
     Remove fragments and normalize default ports. Ignore credentialed, non-HTTP,
@@ -124,7 +136,7 @@ def discover_links(raw: bytes, base_url: str) -> list[CrawlCandidate]:
     soup = BeautifulSoup(raw, "html.parser")
     origin = WebCollector.origin(base_url)
     found: dict[str, CrawlCandidate] = {}
-    for anchor in soup.select(LINK_SELECTOR):
+    for anchor in soup.select(link_selector):
         try:
             url = urldefrag(urljoin(base_url, anchor["href"].strip()))[0]
             if WebCollector.origin(url) != origin:
@@ -141,12 +153,14 @@ def discover_links(raw: bytes, base_url: str) -> list[CrawlCandidate]:
                 url=url, title=title, selection_reason=selection_reason(title)
             )
     if not found:
-        raise ValueError("No detail links found; inspect the HCMUS listing selector")
+        raise ValueError("No detail links found; inspect the configured listing selector")
     return list(found.values())
 
 
-def _publication_date(soup: BeautifulSoup) -> tuple[date | None, str | None, str | None, str]:
-    nodes = soup.select(DATE_SELECTOR)
+def _publication_date(
+    soup: BeautifulSoup, date_selector: str = DATE_SELECTOR
+) -> tuple[date | None, str | None, str | None, str]:
+    nodes = soup.select(date_selector)
     display = nodes[0].get_text(" ", strip=True) if nodes else None
     metadata = soup.select('meta[property="article:published_time"]')
     timestamp = metadata[0].get("content") if metadata else None
@@ -155,7 +169,10 @@ def _publication_date(soup: BeautifulSoup) -> tuple[date | None, str | None, str
     if not display:
         return None, display, timestamp, "missing"
     try:
-        candidate = datetime.strptime(display, "%d/%m/%Y").date()
+        match = re.search(r"\b\d{2}/\d{2}/\d{4}\b", display)
+        candidate = datetime.strptime(
+            match[0] if match and date_selector != DATE_SELECTOR else display, "%d/%m/%Y"
+        ).date()
     except ValueError:
         return None, display, timestamp, "invalid"
     if timestamp:
@@ -170,7 +187,13 @@ def _publication_date(soup: BeautifulSoup) -> tuple[date | None, str | None, str
     return candidate, display, timestamp, "unverified"
 
 
-def parse_detail(raw: bytes) -> HcmusDetail:
+def parse_detail(
+    raw: bytes,
+    *,
+    body_selector: str = BODY_SELECTOR,
+    title_selector: str = TITLE_SELECTOR,
+    date_selector: str = DATE_SELECTOR,
+) -> HcmusDetail:
     """Extract exactly one title/body and retain date evidence without verification.
 
     Reject missing or ambiguous selectors, titles outside the sampling scope and
@@ -178,7 +201,7 @@ def parse_detail(raw: bytes) -> HcmusDetail:
     publication dates remain reviewable. No collection date becomes a reference.
     """
     soup = BeautifulSoup(raw, "html.parser")
-    bodies, titles = soup.select(BODY_SELECTOR), soup.select(TITLE_SELECTOR)
+    bodies, titles = soup.select(body_selector), soup.select(title_selector)
     if len(bodies) != 1:
         raise NoticeRejected("body_selector_mismatch")
     if len(titles) != 1 or not titles[0].get_text(" ", strip=True):
@@ -187,25 +210,38 @@ def parse_detail(raw: bytes) -> HcmusDetail:
     reason = selection_reason(title)
     if reason != "eligible":
         raise NoticeRejected(reason)
+    for table in bodies[0].select("table"):
+        table_text = unicodedata.normalize("NFC", table.get_text(" ", strip=True)).casefold()
+        has_names = re.search(r"\bhọ(?: và)? tên\b", table_text)
+        has_ids = re.search(r"\b(?:mssv|mshv|mã\s*(?:sv|hv|sinh viên|học viên))\b", table_text)
+        identifiers = re.findall(r"(?<!\w)\d{6,10}(?:x{1,4})?(?!\w)", table_text)
+        if has_names and has_ids and len(identifiers) >= 2:
+            raise NoticeRejected("personal_roster")
     prose = BeautifulSoup(str(bodies[0]), "html.parser")
     for tag in prose.select("a, img, iframe, object, embed, script, style, noscript, .post-views"):
         tag.decompose()
     prose_text = unicodedata.normalize("NFC", parse_html(str(prose))).casefold()
+    if "nhiệm vụ của các đơn vị" in prose_text:
+        raise NoticeRejected("staff_administration")
     has_attachment_handoff = any(handoff in prose_text for handoff in _ATTACHMENT_HANDOFFS)
     segments = re.split(r"\n+|(?<=[.!?;])\s+", prose_text)
     prose_text = " ".join(
         segment
         for segment in segments
         if not any(handoff in segment for handoff in _ATTACHMENT_HANDOFFS)
+        or re.search(
+            r"(?:trước|chậm nhất|hạn(?: cuối| chót)?|từ|đến)[^.!?\n]{0,30}\b\d{1,2}[/.-]\d{1,2}",
+            segment,
+        )
     )
     if not prose_text or not any(
         re.search(r"(?<!\w)" + re.escape(action) + r"(?!\w)", prose_text) for action in _ACTIONS
     ):
         raise NoticeRejected("attachment_only_or_no_action_prose")
-    text = parse_html(raw, BODY_SELECTOR)
+    text = parse_html(raw, body_selector)
     if not text.strip():
         raise NoticeRejected("empty_body")
-    candidate, display, timestamp, status = _publication_date(soup)
+    candidate, display, timestamp, status = _publication_date(soup, date_selector)
     warnings = []
     if has_attachment_handoff:
         warnings.append("attachment_context_review")

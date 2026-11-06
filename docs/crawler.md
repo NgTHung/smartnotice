@@ -1,6 +1,6 @@
-# HCMUS crawler reference
+# University crawler reference
 
-The crawler turns one public HCMUS student listing into a bounded set of source snapshots and prepared notices. Contributors use this reference to locate the owning code, understand failures, and change the source adapter without weakening collection provenance. The [collection protocol](collection.md) owns the operator procedure and human review, and the [README](../README.md) owns working commands.
+The crawler turns configured public university listings into a bounded set of source snapshots and prepared notices. Contributors use this reference to locate the owning code, understand failures, and change the source adapter without weakening collection provenance. The [collection protocol](collection.md) owns the operator procedure and human review, and the [README](../README.md) owns working commands.
 
 ## Follow the module boundaries
 
@@ -36,7 +36,7 @@ Every response is streamed through HTTPX decoding and checked against the decode
 
 Discovery resolves relative links, drops fragments, normalizes default ports, retains queries, and removes repeated URLs. It ignores unsupported schemes, malformed/credentialed/off-origin URLs and obvious file extensions. No discovered links raises a layout error. Zero eligible academic titles produces a valid partial run.
 
-Title sampling uses NFC-normalized, case-folded substring rules. Action-prose sampling removes links, embedded media, and view counters, then ignores paragraphs/sentences handing the reader to attached files. At least one remaining segment must contain a configured action phrase at word boundaries. Full prepared text retains link labels and useful attachment references. A valid notice expressed only through a linked instruction, an unsupported action synonym, or a paragraph mixed with an attachment handoff can be excluded. Change these heuristics with synthetic regression cases and source review; do not describe them as model predictions.
+Title sampling uses NFC-normalized, case-folded substring rules. Action-prose sampling removes links, embedded media, and view counters, then ignores paragraphs/sentences handing the reader to attached files. At least one remaining segment must contain a configured action phrase at word boundaries. Full prepared text retains link labels and useful attachment references. A valid notice expressed only through a linked instruction, an unsupported action synonym, or an attachment handoff without an explicit dated task can be excluded. A mixed paragraph with both an action and a dated time cue remains eligible with a review warning. Change these heuristics with synthetic regression cases and source review; do not describe them as model predictions.
 
 `parse_html` removes `.post-views` counters as article boilerplate. It preserves ordinary paragraphs and table header/value relationships through the existing parser. Attachment handoffs retained alongside other action prose receive `attachment_context_review`. Merged table cells and Unicode replacement characters receive their own review warnings; they do not silently change raw bytes.
 
@@ -70,3 +70,7 @@ Argparse also exits 2 for invalid CLI syntax before a collection run starts. Dis
 Read the [writing guide](WRITING_GUIDE.md) and [contributor rules](../AGENTS.md). Add synthetic HTML for selector/date/sampling changes and mocked HTTP for request/error behavior. Keep raw snapshots distinct from selected manifest entries, keep all human-review flags, and update the [data contract](interface.md) with persisted field changes.
 
 `tests/test_crawl.py` covers adapter rules, CLI, preparation, failure checkpoints and bounded collection. `tests/test_collectors.py` covers robots, redirects, gzip decoding, spacing, response limits, and email compatibility. `tests/test_io.py` checks preservation when manifest replacement fails. `tests/test_parsers.py` covers article/table behavior. Run the required suite, lint, formatting and offline demo from AGENTS.md; a live pilot is separate evidence recorded under [reports](../reports/README.md).
+
+`collectors/sources.py` configures HCMUS, UIT, and UEH selectors and same-origin pagination. `crawl_web` accepts `source` and `max_pages` while retaining the one-page HCMUS defaults. Listing discovery deduplicates URLs across pages, stops at the target, repeated pages or the page/candidate budget, and logs listing snapshots. Details on each listing are processed before the next page is requested. See the collection protocol for source URLs and template limitations.
+
+`collectors/dataset.py` owns full corpus validation, metadata-only catalog export, and frozen-URL reconstruction with old/new document-ID mappings. The tools under `tools/` call those functions. Catalog hydration does not discover replacement notices or accept silently changed text.
