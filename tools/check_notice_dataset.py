@@ -1,18 +1,25 @@
-"""Audit a 40/30/30 corpus and optionally export a body-free source catalog."""
+"""Validate a 40/30/30 local crawl or its shared prepared snapshot."""
 
 import argparse
 import json
 from pathlib import Path
 
-from smartnotice.collectors.dataset import export_catalog, validate_corpus
+from smartnotice.collectors.dataset import export_catalog, validate_corpus, validate_team_snapshot
 
 
 def main() -> int:
     """Validate the complete corpus; retain personal-pattern findings only locally."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-dir", type=Path, required=True)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--run-dir", type=Path)
+    inputs.add_argument("--snapshot-dir", type=Path)
     parser.add_argument("--catalog-dir", type=Path)
     args = parser.parse_args()
+    if args.snapshot_dir:
+        if args.catalog_dir:
+            parser.error("--catalog-dir requires --run-dir")
+        print(json.dumps(validate_team_snapshot(args.snapshot_dir), ensure_ascii=False, indent=2))
+        return 0
     counts = {"HCMUS": 40, "UIT": 30, "UEH": 30}
     report = (
         export_catalog(args.run_dir, args.catalog_dir, counts)

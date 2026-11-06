@@ -44,6 +44,34 @@ class NoticeCatalogEntry(Record):
         return self
 
 
+class TeamSnapshotIndex(Record):
+    """Connect shared text to its source catalog without local filesystem paths."""
+
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    institution: Literal["HCMUS", "UIT", "UEH"]
+    title: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+    original_prepared_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    prepared_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    characters: int = Field(gt=0)
+    additional_redactions: int = Field(ge=0)
+    publication_date_candidate: date | None
+    publication_date_status: Literal["unverified", "missing", "invalid", "conflict"]
+
+
+class TeamSnapshotSummary(Record):
+    """Describe an automatically masked pilot without claiming human review."""
+
+    documents: int = Field(gt=0)
+    institutions: dict[Literal["HCMUS", "UIT", "UEH"], int]
+    additional_redactions: int = Field(ge=0)
+    human_privacy_review_complete: Literal[False]
+    human_date_review_complete: Literal[False]
+    annotations_complete: Literal[False]
+    text_version: Literal["team-contact-redacted-v1"]
+    contact_pattern_scan_passed: Literal[True]
+
+
 class CrawlIndex(Record):
     """Connect an accepted source snapshot to its prepared text and pending reviews."""
 

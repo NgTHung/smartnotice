@@ -13,7 +13,14 @@ from smartnotice.collectors.web import WebCollector
 from smartnotice.io import read_jsonl, write_jsonl
 from smartnotice.preprocessing.pipeline import prepare
 from smartnotice.preprocessing.text import normalize_and_redact, segment_sentences
-from smartnotice.schemas import CrawlIndex, CrawlSummary, Notice, NoticeCatalogEntry
+from smartnotice.schemas import (
+    CrawlIndex,
+    CrawlSummary,
+    Notice,
+    NoticeCatalogEntry,
+    TeamSnapshotIndex,
+    TeamSnapshotSummary,
+)
 
 SOURCE_IDS = {"HCMUS": "hcmus-student", "UIT": "uit-student", "UEH": "ueh-student"}
 
@@ -299,12 +306,108 @@ def export_team_snapshot(root: Path, destination: Path) -> dict:
         "text_version": "team-contact-redacted-v1",
         "contact_pattern_scan_passed": True,
     }
+    released_index = [
+        TeamSnapshotIndex.model_validate(r).model_dump(mode="json") for r in released_index
+    ]
+    summary = TeamSnapshotSummary.model_validate(summary).model_dump(mode="json")
     write_jsonl(destination / "notices.jsonl", released)
     write_jsonl(destination / "snapshot_index.jsonl", released_index)
     (destination / "snapshot_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return summary
+
+
+def validate_team_snapshot(directory: Path) -> dict:
+    """Validate shared files alone, without raw HTML, network, or file mutations.
+
+    Check strict schemas, source identity/hash links, quotas, dates, segmentation,
+    masking, uniqueness and summary counts. No human approval is inferred.
+    """
+    notices = [Notice.model_validate(r) for r in read_jsonl(directory / "notices.jsonl")]
+    index = [
+        TeamSnapshotIndex.model_validate(r) for r in read_jsonl(directory / "snapshot_index.jsonl")
+    ]
+    catalog = [
+        NoticeCatalogEntry.model_validate(r) for r in read_jsonl(directory / "sources.jsonl")
+    ]
+    summary = TeamSnapshotSummary.model_validate_json(
+        (directory / "snapshot_summary.json").read_text(encoding="utf-8")
+    )
+    ids = [n.doc_id for n in notices]
+    if (
+        len(ids) != 100
+        or len(set(ids)) != 100
+        or len(index) != 100
+        or len(catalog) != 100
+        or set(ids) != {r.doc_id for r in index}
+        or set(ids) != {r.doc_id for r in catalog}
+    ):
+        raise ValueError("Shared files have duplicate, missing or inconsistent identities")
+    expected = {"HCMUS": 40, "UIT": 30, "UEH": 30}
+    counts = dict(Counter(r.institution for r in index))
+    if counts != expected or summary.institutions != expected or summary.documents != 100:
+        raise ValueError("Shared source quotas or summary counts differ")
+    by_id = {n.doc_id: n for n in notices}
+    by_source = {r.doc_id: r for r in catalog}
+    hashes: set[str] = set()
+    for row in index:
+        notice, source = by_id[row.doc_id], by_source[row.doc_id]
+        adapter = SOURCES[source.source]
+        if (
+            row.institution != source.institution
+            or row.institution != adapter.institution
+            or notice.raw_sha256 != source.raw_sha256
+            or notice.doc_id != source.raw_sha256[:20]
+            or notice.source_ref != row.url
+            or row.url != source.url
+            or WebCollector.origin(row.url) != WebCollector.origin(adapter.listing_url)
+            or source.selector != adapter.body_selector
+            or row.original_prepared_text_sha256 != source.prepared_text_sha256
+        ):
+            raise ValueError(f"Shared provenance mismatch: {row.doc_id}")
+        digest = hashlib.sha256(notice.text.encode("utf-8")).hexdigest()
+        if (
+            digest != row.prepared_text_sha256
+            or len(notice.text) != row.characters
+            or digest in hashes
+        ):
+            raise ValueError(f"Shared text hash/length mismatch or duplicate: {row.doc_id}")
+        hashes.add(digest)
+        if (
+            not notice.text
+            or notice.sentences != segment_sentences(notice.text)
+            or notice.redaction_count < row.additional_redactions
+        ):
+            raise ValueError(f"Shared segmentation/redaction count mismatch: {row.doc_id}")
+        if (
+            notice.source_type != "web"
+            or notice.synthetic
+            or notice.domain_holdout
+            or not notice.privacy_review_required
+            or notice.reference_date is not None
+            or notice.reference_date_origin != "missing"
+            or row.publication_date_candidate != source.publication_date_candidate
+            or row.publication_date_status != source.publication_date_status
+        ):
+            raise ValueError(f"Shared dates/review metadata mismatch: {row.doc_id}")
+        if any(p.search(notice.text) for p in [_SHARE_PHONE, _CONTACT_NAME, _INLINE_CONTACT]):
+            raise ValueError(f"Configured contact pattern remains: {row.doc_id}")
+    if summary.additional_redactions != sum(r.additional_redactions for r in index):
+        raise ValueError("Shared additional-redaction summary differs from index")
+    return {
+        "validated_documents": 100,
+        "institutions": counts,
+        "unique_prepared_texts": len(hashes),
+        "schemas_valid": True,
+        "source_hash_links_valid": True,
+        "sentence_offsets_valid": True,
+        "text_version": summary.text_version,
+        "additional_redactions": summary.additional_redactions,
+        "human_privacy_review_complete": False,
+        "human_date_review_complete": False,
+        "annotations_complete": False,
+    }
 
 
 def fetch_catalog(collector: WebCollector, catalog: Path, destination: Path) -> int:

@@ -57,3 +57,14 @@ Theo yêu cầu chia sẻ đầy đủ dữ liệu của người dùng, thư m�
 Bản `team-contact-redacted-v1` che thêm 128 lượt tên người liên hệ hoặc số điện thoại, giữ 40/30/30 tài liệu và tạo lại vị trí câu. Mã tài liệu vẫn truy về nguồn HTML; mã băm văn bản trước/sau che được ghi riêng để không dùng nhầm phiên bản gán nhãn. Bản chia sẻ vẫn giữ cờ chờ con người kiểm tra riêng tư, ngày đăng và nội dung. HTML gốc và trang bị loại không đưa lên Git.
 
 Kiểm tra bản chia sẻ: 163 kiểm thử đạt; lint/format đạt; kiểm tra lại 100 mã tài liệu, tỷ lệ 40/30/30, mã băm văn bản và mọi vị trí câu. Quét lại không còn các mẫu tên liên hệ/số điện thoại được cấu hình; kết quả này không khẳng định đã loại mọi loại thông tin cá nhân.
+
+
+## Rà lại cấu trúc và định dạng bản đã push
+
+Đã đối chiếu nhánh GitHub `hcmus-web-crawler` tại commit `573c64d` và đọc dữ liệu trực tiếp từ Git. Toàn bộ 100 bản ghi khớp schema Notice, đúng 40/30/30, không trùng ID hay văn bản, và khớp nguồn, mã băm, vị trí câu. Mã băm lịch sử của code được đối chiếu với commit thu thập `6ea25fb`; metadata nguồn không bị nhầm là mã băm của code mới nhất.
+
+Bổ sung schema TeamSnapshotIndex/TeamSnapshotSummary và lệnh `tools/check_notice_dataset.py --snapshot-dir data/catalogs/hcmus-focused-100` để kiểm tra bản chia sẻ độc lập với HTML cục bộ. Kiểm thử dùng bản sao chỉ gồm các tệp đã chia sẻ, đồng thời thử từ chối trường lạ, URL sai, thiếu bài, sửa văn bản, sai tổng kết/ngày đăng, mất phân đoạn và tự xóa cờ rà soát.
+
+Kết quả sau bổ sung: 172 kiểm thử đạt, lint/format và demo offline đạt. Nội dung và các tệp dữ liệu đã push giữ nguyên so với `573c64d`. `validation.json` là kiểm chứng bộ crawl gốc; `snapshot_summary.json` là tổng kết bản che thêm thông tin liên hệ, tránh hiểu nhầm phát hiện điện thoại trong bản gốc là lỗi còn tồn tại trong bản chia sẻ.
+
+Cấu trúc chia sẻ được giữ theo trách nhiệm: mã tái sử dụng trong src, lệnh chạy trong tools, kiểm thử trong tests, báo cáo trong reports, và bản dữ liệu có phiên bản trong data/catalogs. Bộ này hợp lệ cho bước rà soát/gán nhãn pilot; chưa có nhãn chuẩn, xác minh ngày đăng bởi con người hay nhóm chia train/test được duyệt.

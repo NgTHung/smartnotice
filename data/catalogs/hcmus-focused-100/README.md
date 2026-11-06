@@ -8,6 +8,16 @@ The repository includes the full prepared text of all 100 notices in `notices.js
 
 `snapshot_index.jsonl` maps each document to its institution, title, source URL, original-text hash and shared-text hash. `snapshot_summary.json` records counts and additional masking. Raw source IDs remain unchanged, while shared-text hashes and offsets can differ from the local automatic crawl. Do not reuse annotations from another text version without migration and validation.
 
+## Check the shared files
+
+Run without raw HTML or network access:
+
+```powershell
+uv run python tools/check_notice_dataset.py --snapshot-dir data/catalogs/hcmus-focused-100
+```
+
+This validates the Notice, TeamSnapshotIndex and TeamSnapshotSummary schemas, all 100 source/hash links, 40/30/30 quotas, text lengths, unique IDs/text hashes, date evidence, regenerated sentences, configured contact patterns and summary totals. `validation.json` records the original local crawl audit before extra contact masking; `snapshot_summary.json` describes the shared text version. A privacy-pattern finding in the original audit does not mean that same contact remains in the shared text.
+
 ## Optionally rebuild the original sources
 
 Run from the repository root after the setup in the [README](../../../README.md):

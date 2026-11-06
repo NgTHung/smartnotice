@@ -61,6 +61,7 @@ The combined `index.jsonl`, `prepared/notices.jsonl`, and `summary.json` live in
 The checked dataset, including all 100 prepared notice texts, is [data/catalogs/hcmus-focused-100](data/catalogs/hcmus-focused-100/README.md). Use `data/catalogs/hcmus-focused-100/notices.jsonl` directly after cloning. Optionally rebuild the original source texts locally, or validate a newly collected batch:
 
 ```powershell
+uv run python tools/check_notice_dataset.py --snapshot-dir data/catalogs/hcmus-focused-100
 uv run python tools/fetch_notice_catalog.py --catalog data/catalogs/hcmus-focused-100/sources.jsonl --run-id team-copy-001
 uv run python tools/check_notice_dataset.py --run-dir data/raw/crawls/hcmus-focused-100-001
 ```
@@ -82,6 +83,7 @@ Import the exported tasks and `data/annotations/label_studio.xml` into your Labe
 
 | Path | Purpose |
 |---|---|
+| `data/catalogs/` | Versioned shared snapshots, source catalogs and dataset documentation |
 | `data/raw/` | Immutable source bytes and a local collection manifest |
 | `data/interim/` | Redacted notices, reference dates, and sentence offsets |
 | `data/processed/` | Grouped split assignments and silver applicability pairs |

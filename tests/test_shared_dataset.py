@@ -1,0 +1,61 @@
+"""Verify the shipped snapshot and reject corruption without local crawl files."""
+
+import json
+import shutil
+from pathlib import Path
+
+import pytest
+from smartnotice.collectors.dataset import validate_team_snapshot
+from smartnotice.io import read_jsonl, write_jsonl
+
+
+@pytest.fixture
+def snapshot(tmp_path):
+    source = Path(__file__).resolve().parents[1] / "data/catalogs/hcmus-focused-100"
+    for filename in [
+        "notices.jsonl",
+        "snapshot_index.jsonl",
+        "snapshot_summary.json",
+        "sources.jsonl",
+    ]:
+        shutil.copyfile(source / filename, tmp_path / filename)
+    return tmp_path
+
+
+def test_shipped_snapshot_validates_without_raw_or_network(snapshot):
+    report = validate_team_snapshot(snapshot)
+    assert report["institutions"] == {"HCMUS": 40, "UIT": 30, "UEH": 30}
+    assert report["validated_documents"] == report["unique_prepared_texts"] == 100
+    assert report["human_privacy_review_complete"] is False
+    assert not (snapshot / "raw").exists()
+
+
+@pytest.mark.parametrize(
+    "damage", ["unknown_field", "source", "missing", "text", "summary", "date", "offsets", "review"]
+)
+def test_shared_snapshot_rejects_corruption(snapshot, damage):
+    index = read_jsonl(snapshot / "snapshot_index.jsonl")
+    notices = read_jsonl(snapshot / "notices.jsonl")
+    if damage == "unknown_field":
+        index[0]["machine_local_path"] = "private/raw.html"
+    elif damage == "source":
+        index[0]["url"] = "https://outside.invalid/notice"
+    elif damage == "missing":
+        notices.pop()
+    elif damage == "text":
+        notices[0]["text"] += " Changed source"
+    elif damage == "summary":
+        p = snapshot / "snapshot_summary.json"
+        summary = json.loads(p.read_text(encoding="utf-8"))
+        summary["additional_redactions"] += 1
+        p.write_text(json.dumps(summary), encoding="utf-8")
+    elif damage == "date":
+        index[0]["publication_date_candidate"] = "2000-01-01"
+    elif damage == "offsets":
+        notices[0]["sentences"] = []
+    else:
+        notices[0]["privacy_review_required"] = False
+    write_jsonl(snapshot / "snapshot_index.jsonl", index)
+    write_jsonl(snapshot / "notices.jsonl", notices)
+    with pytest.raises(ValueError):
+        validate_team_snapshot(snapshot)
