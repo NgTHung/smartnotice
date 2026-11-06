@@ -1,8 +1,14 @@
-# HCMUS-focused notice pilot
+# HCMUS-focused notice dataset
 
 This catalog identifies one 100-notice pilot collected on 2026-11-06: 40 HCMUS, 30 UIT and 30 UEH notices. HCMUS has the largest source share. The collection is a pilot for task and audience annotation, not a labeled training set or the project's complete research corpus.
 
-## Use the shared sources
+## Use the included dataset
+
+The repository includes the full prepared text of all 100 notices in `notices.jsonl`; teammates can use it immediately after cloning, without crawling again. This is the `team-contact-redacted-v1` text version, with additional contact-name/phone masking and regenerated sentence offsets. Use this version consistently for annotation.
+
+`snapshot_index.jsonl` maps each document to its institution, title, source URL, original-text hash and shared-text hash. `snapshot_summary.json` records counts and additional masking. Raw source IDs remain unchanged, while shared-text hashes and offsets can differ from the local automatic crawl. Do not reuse annotations from another text version without migration and validation.
+
+## Optionally rebuild the original sources
 
 Run from the repository root after the setup in the [README](../../../README.md):
 
@@ -16,11 +22,14 @@ The output is local under `data/raw/crawls/team-copy-001/`. `prepared/notices.js
 
 | File | Purpose |
 |---|---|
+| `notices.jsonl` | Full text and sentence offsets for all 100 notices, ready for team review and annotation |
+| `snapshot_index.jsonl` | Source metadata and original/shared text hashes |
+| `snapshot_summary.json` | Shared snapshot counts, masking and pending-review state |
 | `sources.jsonl` | Exactly 100 public source URLs, institution/source IDs, selectors, raw/text hashes, lengths and unverified date evidence |
 | `validation.json` | Automated counts and checks; human review and annotation remain incomplete |
 | `collection.json` | Collection settings and hashes of the source catalog, lockfile and collection code |
 
-The catalog contains no article bodies, names, contact lists, full HTML or machine-local paths. Real text remains outside Git under the project's [privacy rules](../../../AGENTS.md). A public university page and automatic masking do not establish completed human privacy review.
+`sources.jsonl` is a metadata-only catalog. The accompanying prepared snapshot is shared at the user's explicit request for team use; original HTML, rejected pages and private logs remain local. Additional contact masking does not establish completed human privacy review. Privacy/date/content checks and annotation remain pending; the files do not claim human approval.
 
 ## Interpret selection
 

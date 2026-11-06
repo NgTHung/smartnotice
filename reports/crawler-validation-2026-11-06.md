@@ -43,8 +43,17 @@ Có 10 cờ ngữ cảnh tệp đính kèm và 11 cờ ô bảng gộp; các c�
 
 Chỉ giữ `data/raw/crawls/hcmus-focused-100-20261106/` làm kết quả thu thập hiện hành. Đã dọn 25 đường dẫn kết quả cũ/tệp thử nghiệm trong repository và 7 bản HTML không còn được chọn trong vùng raw; giữ snapshot từ chối của lượt hiện hành để truy vết. Ví dụ giả lập và báo cáo lịch sử về phần mềm được giữ riêng, không tính vào 100 mẫu.
 
-Danh mục được chia sẻ ở [data/catalogs/hcmus-focused-100](../data/catalogs/hcmus-focused-100/README.md), gồm 100 URL nguồn, selector, mã băm và thông tin kiểm chứng. Không đưa HTML hay văn bản thật chưa được nhóm rà soát vào Git, theo [AGENTS.md](../AGENTS.md). Công cụ dựng lại kiểm tra văn bản trùng mã băm và ghi ánh xạ ID khi HTML thay đổi; nguồn đã sửa nội dung sẽ gây lỗi thay vì âm thầm thay dữ liệu.
+Danh mục được chia sẻ ở [data/catalogs/hcmus-focused-100](../data/catalogs/hcmus-focused-100/README.md), gồm 100 URL nguồn, selector, mã băm và thông tin kiểm chứng. HTML, nhật ký riêng và các trang bị loại giữ cục bộ. Bản nội dung chuẩn bị được chia sẻ theo yêu cầu trực tiếp của người dùng; trạng thái rà soát của con người vẫn được giữ, không tự xác nhận đã hoàn tất. Công cụ dựng lại kiểm tra văn bản trùng mã băm và ghi ánh xạ ID khi HTML thay đổi; nguồn đã sửa nội dung sẽ gây lỗi thay vì âm thầm thay dữ liệu.
 
 ## Hạn chế cần báo cáo
 
 Lấy theo thứ tự trang danh sách, không phải mẫu ngẫu nhiên; nguồn UEH thiên về học bổng. Bộ lọc từ khóa có thể bỏ sót cách diễn đạt khác; bộ này không đại diện toàn bộ thông báo học vụ. Không đọc PDF, ảnh hay tệp đính kèm; không tự xác minh đầy đủ tác vụ. Chưa có bằng chứng nhãn chuẩn, độ đồng thuận, chất lượng mô hình, ẩn danh hoàn tất hoặc nhóm chia tập đã được con người phê duyệt.
+
+
+## Bản nội dung chia sẻ cho nhóm
+
+Theo yêu cầu chia sẻ đầy đủ dữ liệu của người dùng, thư mục `data/catalogs/hcmus-focused-100/` có thêm `notices.jsonl`, `snapshot_index.jsonl` và `snapshot_summary.json`. Nhóm có sẵn toàn văn 100 thông báo sau khi clone, không bắt buộc crawl lại.
+
+Bản `team-contact-redacted-v1` che thêm 128 lượt tên người liên hệ hoặc số điện thoại, giữ 40/30/30 tài liệu và tạo lại vị trí câu. Mã tài liệu vẫn truy về nguồn HTML; mã băm văn bản trước/sau che được ghi riêng để không dùng nhầm phiên bản gán nhãn. Bản chia sẻ vẫn giữ cờ chờ con người kiểm tra riêng tư, ngày đăng và nội dung. HTML gốc và trang bị loại không đưa lên Git.
+
+Kiểm tra bản chia sẻ: 163 kiểm thử đạt; lint/format đạt; kiểm tra lại 100 mã tài liệu, tỷ lệ 40/30/30, mã băm văn bản và mọi vị trí câu. Quét lại không còn các mẫu tên liên hệ/số điện thoại được cấu hình; kết quả này không khẳng định đã loại mọi loại thông tin cá nhân.

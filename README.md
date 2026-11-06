@@ -58,14 +58,14 @@ The default allocation is fixed at 40/30/30. `--limits` can set another allocati
 
 The combined `index.jsonl`, `prepared/notices.jsonl`, and `summary.json` live in the run folder. Each source subfolder preserves its own manifest, snapshots, and logs. Cross-source identical prepared texts count once; an insufficient unique total remains incomplete. For one source, `crawl-web --source uit-student` or `--source ueh-student` accepts `--max-pages 30` to follow multiple listings.
 
-The checked source catalog for the shared pilot is [data/catalogs/hcmus-focused-100](data/catalogs/hcmus-focused-100/README.md). Rebuild its texts locally, or validate a newly collected batch:
+The checked dataset, including all 100 prepared notice texts, is [data/catalogs/hcmus-focused-100](data/catalogs/hcmus-focused-100/README.md). Use `data/catalogs/hcmus-focused-100/notices.jsonl` directly after cloning. Optionally rebuild the original source texts locally, or validate a newly collected batch:
 
 ```powershell
 uv run python tools/fetch_notice_catalog.py --catalog data/catalogs/hcmus-focused-100/sources.jsonl --run-id team-copy-001
 uv run python tools/check_notice_dataset.py --run-dir data/raw/crawls/hcmus-focused-100-001
 ```
 
-The catalog shares URLs and hashes. Real HTML and article text stay in ignored local storage pending human review. The catalog README explains raw-ID mappings, source changes, privacy, annotation, and the project's larger data targets.
+The shared snapshot contains additional contact masking and regenerated sentence offsets; use its text version for team annotation. Original HTML and private crawl logs stay local. The dataset README explains original/shared text hashes, pending human review and the project's larger targets.
 
 Choose a new `--run-id` for every run. Outputs live under `data/raw/crawls/<run-id>/`: inspect `summary.json`, `index.jsonl`, `crawl_log.jsonl`, and `prepared/notices.jsonl`. Exit codes are 0 for the collection target reached, 2 for too few usable candidates, 1 for failure, and 130 for interruption. Invalid CLI syntax also exits 2 before a run starts. Completion does not certify human review. The [collection protocol](docs/collection.md) explains source selection, pending dates, recovery, and privacy review; the [crawler reference](docs/crawler.md) explains implementation and limitations.
 

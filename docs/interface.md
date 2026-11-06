@@ -69,3 +69,10 @@ University source IDs are `hcmus-student`, `uit-student`, `ueh-student`, and `ue
 The HCMUS-focused batch requires 40 HCMUS, 30 UIT and 30 UEH records. No source quota is silently reassigned. `complete=true` requires exact source quotas, 100 distinct prepared texts, successful source runs and corpus validation. Metadata export independently reruns validation before replacing a catalog.
 
 Catalog reconstruction writes a new local `raw/manifest.jsonl`, source snapshots, `prepared/notices.jsonl`, `provenance.jsonl` and `summary.json`. Provenance records map `catalog_doc_id` to the fetched `doc_id`, institution, final URL, raw hash, raw-hash-match flag and expected prepared-text hash. Rebuilt raw hashes may differ due to HTML changes; prepared text must match exactly or the reconstruction fails. All human-review requirements remain pending, and no original publication date is automatically promoted to `reference_date`.
+
+
+## Share prepared notice text
+
+The team-authorized `notices.jsonl` snapshot uses the existing Notice schema and retains source-derived IDs, raw hashes, source URLs and pending privacy-review flags. `team-contact-redacted-v1` adds phone-like-string and honorific contact-name masking; sentence offsets are regenerated against the shared text. It does not change original raw bytes or silently promote publication candidates to reference dates.
+
+`snapshot_index.jsonl` records `doc_id`, institution, title, URL, `original_prepared_text_sha256`, shared `prepared_text_sha256`, shared character length, additional-redaction count, and candidate publication date/status. `snapshot_summary.json` records 100 documents, 40/30/30 institution counts, masking count, text version and pending human-review/annotation status. The shared text hash can differ from the source catalog's original text hash. Annotations must match the chosen text version exactly.

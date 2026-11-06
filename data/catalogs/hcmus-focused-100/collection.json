@@ -37,5 +37,6 @@
   "split_assigned": false,
   "validation_command": "uv run python tools/check_notice_dataset.py --run-dir data/raw/crawls/hcmus-focused-100-20261106",
   "checked_at": "2026-11-06T12:27:50.209648+00:00",
-  "hash_text_normalization": "UTF-8 with LF newlines, matching Git text normalization"
+  "hash_text_normalization": "UTF-8 with LF newlines, matching Git text normalization",
+  "collection_code_commit": "6ea25fbbb157975c5ed14297c865375a100aee4f"
 }

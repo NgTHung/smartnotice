@@ -12,10 +12,47 @@ from smartnotice.collectors.sources import SOURCES
 from smartnotice.collectors.web import WebCollector
 from smartnotice.io import read_jsonl, write_jsonl
 from smartnotice.preprocessing.pipeline import prepare
-from smartnotice.preprocessing.text import normalize_and_redact
+from smartnotice.preprocessing.text import normalize_and_redact, segment_sentences
 from smartnotice.schemas import CrawlIndex, CrawlSummary, Notice, NoticeCatalogEntry
 
 SOURCE_IDS = {"HCMUS": "hcmus-student", "UIT": "uit-student", "UEH": "ueh-student"}
+
+_SHARE_PHONE = re.compile(r"(?<!\w)\(?(?:\+84|0)(?:[ .()-]*\d){8,10}\)?(?![ .()-]*\d)")
+_UPPER_NAME = "[A-ZÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚĂĐĨŨƠƯẠẢẤẦẨẪẬẮẰẲẴẶẸẺẼỀẾỂỄỆỈỊỌỎỐỒỔỖỘỚỜỞỠỢỤỦỨỪỬỮỰỲỴÝỶỸ]"
+_NAME_WORD = _UPPER_NAME + r"[^\W\d_]*"
+_CONTACT_NAME = re.compile(
+    r"(?<!tiếng )(?<!Tiếng )\b(?i:thầy|cô|anh|chị|ms\.|mr\.)[ \t]+"
+    + "("
+    + _NAME_WORD
+    + r"(?:[ \t]+"
+    + _NAME_WORD
+    + r"){0,5})(?!\w)"
+)
+_INLINE_CONTACT = re.compile(
+    r"(?i:liên hệ):[ \t]*(" + _NAME_WORD + r"(?:[ \t]+" + _NAME_WORD + r"){0,5})(?!\w)"
+)
+
+
+def redact_team_contacts(text: str) -> tuple[str, int]:
+    """Mask phone-like strings and honorific contact names before sharing a snapshot.
+
+    Preserve dates and ordinary phrases such as tiếng Anh. These deterministic
+    rules supplement existing masking; they do not complete human privacy review.
+    """
+    text, count = _SHARE_PHONE.subn("[PHONE]", text)
+    for pattern in [_CONTACT_NAME, _INLINE_CONTACT]:
+
+        def replace(match):
+            start, end = match.span(1)
+            return (
+                match.group()[: start - match.start()]
+                + "[NAME]"
+                + match.group()[end - match.start() :]
+            )
+
+        text, added = pattern.subn(replace, text)
+        count += added
+    return text, count
 
 
 def _contained_file(root: Path, relative: str) -> Path:
@@ -205,6 +242,69 @@ def export_catalog(root: Path, destination: Path, expected_counts: dict[str, int
     catalog = [NoticeCatalogEntry.model_validate(row).model_dump(mode="json") for row in catalog]
     write_jsonl(destination / "sources.jsonl", catalog)
     return report
+
+
+def export_team_snapshot(root: Path, destination: Path) -> dict:
+    """Publish 100 prepared notices with extra contact masking and rebuilt offsets.
+
+    Preserve source IDs and original hashes; record separate shared-text hashes.
+    Keep human review pending. Validate all input before writing any shared text.
+    """
+    counts = {"HCMUS": 40, "UIT": 30, "UEH": 30}
+    validate_corpus(root, counts)
+    index = read_jsonl(root / "index.jsonl")
+    original = {
+        r["doc_id"]: Notice.model_validate(r) for r in read_jsonl(root / "prepared/notices.jsonl")
+    }
+    released, released_index = [], []
+    total_redactions = 0
+    for row in index:
+        notice = original[row["doc_id"]]
+        text, added = redact_team_contacts(notice.text)
+        shared = Notice.model_validate(
+            {
+                **notice.model_dump(),
+                "text": text,
+                "sentences": segment_sentences(text),
+                "redaction_count": notice.redaction_count + added,
+            }
+        )
+        if _SHARE_PHONE.search(text) or _CONTACT_NAME.search(text) or _INLINE_CONTACT.search(text):
+            raise ValueError(f"Contact pattern remains in shared record: {notice.doc_id}")
+        released.append(shared.model_dump(mode="json"))
+        released_index.append(
+            {
+                "doc_id": row["doc_id"],
+                "institution": row["institution"],
+                "title": row["title"],
+                "url": row["url"],
+                "original_prepared_text_sha256": row["prepared_text_sha256"],
+                "prepared_text_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                "characters": len(text),
+                "additional_redactions": added,
+                "publication_date_candidate": row["publication_date_candidate"],
+                "publication_date_status": row["publication_date_status"],
+            }
+        )
+        total_redactions += added
+    if len({r["prepared_text_sha256"] for r in released_index}) != 100:
+        raise ValueError("Contact redaction created duplicate shared texts")
+    summary = {
+        "documents": 100,
+        "institutions": counts,
+        "additional_redactions": total_redactions,
+        "human_privacy_review_complete": False,
+        "human_date_review_complete": False,
+        "annotations_complete": False,
+        "text_version": "team-contact-redacted-v1",
+        "contact_pattern_scan_passed": True,
+    }
+    write_jsonl(destination / "notices.jsonl", released)
+    write_jsonl(destination / "snapshot_index.jsonl", released_index)
+    (destination / "snapshot_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return summary
 
 
 def fetch_catalog(collector: WebCollector, catalog: Path, destination: Path) -> int:
