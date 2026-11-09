@@ -1,6 +1,7 @@
 """Build event/profile rows while retaining document IDs for split inheritance."""
 
 from smartnotice.labeling.applicability import match_audiences
+from smartnotice.labeling.llm import json_sha256
 from smartnotice.labeling.validation import validate_annotation
 from smartnotice.schemas import Annotation, Notice, Profile
 
@@ -11,7 +12,9 @@ def build_pairs(
     """Generate silver labels from one adjudicated annotation per document.
 
     Constraints and reasons are label provenance. Model inputs consist only of
-    event_text and profile. A downstream trainer joins splits by doc_id.
+    event_text and profile. A downstream trainer joins splits by doc_id. Each row
+    records ``annotation_sha256`` and ``profile_set_sha256``, canonical JSON
+    hashes of its curated annotation and of the ordered profile list.
     """
     ids = [annotation.doc_id for annotation in annotations]
     if len(ids) != len(set(ids)):
@@ -20,10 +23,12 @@ def build_pairs(
     if len(profile_ids) != len(set(profile_ids)):
         raise ValueError("Profile IDs must be unique")
     documents = {notice.doc_id: notice for notice in notices}
+    profile_set_sha256 = json_sha256([profile.model_dump(mode="json") for profile in profiles])
     rows = []
     for annotation in annotations:
         notice = documents[annotation.doc_id]
         validate_annotation(annotation, notice)
+        annotation_sha256 = json_sha256(annotation.model_dump(mode="json"))
         sentences = {sentence.sentence_id: sentence.text for sentence in notice.sentences}
         constraints = {c.audience_span_id: c for c in annotation.audience_constraints}
         span_labels = {span.span_id: span.label for span in annotation.spans}
@@ -54,6 +59,8 @@ def build_pairs(
                         "label": label,
                         "label_origin": "constraint_rule",
                         "rule_reason": reason,
+                        "annotation_sha256": annotation_sha256,
+                        "profile_set_sha256": profile_set_sha256,
                         "synthetic": notice.synthetic,
                     }
                 )

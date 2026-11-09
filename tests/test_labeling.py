@@ -1,6 +1,7 @@
 import pytest
 from smartnotice.labeling.analysis import cohens_kappa, span_f1
 from smartnotice.labeling.applicability import match_audiences, match_profile
+from smartnotice.labeling.llm import json_sha256
 from smartnotice.labeling.pairs import build_pairs
 from smartnotice.labeling.studio import export_tasks, import_tasks
 from smartnotice.labeling.validation import validate_annotation
@@ -150,6 +151,17 @@ def test_generated_pairs_need_adjudicated_unique_documents(notices, annotations)
     assert rows[0]["label"] == "APPLIES"
     with pytest.raises(ValueError, match="adjudicated"):
         build_pairs(notices, [annotations[0], annotations[0]], profiles)
+
+
+def test_generated_pairs_record_annotation_and_profile_set_hashes(notices, annotations):
+    profiles = [Profile(profile_id="p", cohort=2024), Profile(profile_id="q", cohort=2023)]
+    rows = build_pairs(notices, annotations[:1], profiles)
+    expected = json_sha256(annotations[0].model_dump(mode="json"))
+    assert {row["annotation_sha256"] for row in rows} == {expected}
+    profile_hash = json_sha256([p.model_dump(mode="json") for p in profiles])
+    assert {row["profile_set_sha256"] for row in rows} == {profile_hash}
+    reordered = build_pairs(notices, annotations[:1], profiles[::-1])
+    assert reordered[0]["profile_set_sha256"] != profile_hash
 
 
 def test_unmodeled_conditions_cannot_produce_applies(notices, annotations):
