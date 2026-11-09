@@ -31,34 +31,118 @@ def test_annotation_validation_rejects_broken_contracts(notices, annotations, de
         validate_annotation(annotation, notice)
 
 
+def _listed(**fields):
+    return AudienceConstraint(audience_span_id="u", scope="listed", **fields)
+
+
 @pytest.mark.parametrize(
     ("profile", "label"),
     [
-        ({"cohort": "k24", "program": "clc", "status": "active"}, "APPLIES"),
-        ({"cohort": "K23", "program": "CLC", "status": "active"}, "NOT_APPLIES"),
-        ({"cohort": "K24", "program": "CLC", "status": "defended"}, "NOT_APPLIES"),
-        ({"cohort": "K24", "program": "CLC"}, "UNCLEAR"),
-        ({"cohort": "K24", "status": "active"}, "UNCLEAR"),
+        ({"cohort": 2024, "program": "clc", "status": "active"}, "APPLIES"),
+        ({"cohort": 2023, "program": "CLC", "status": "active"}, "NOT_APPLIES"),
+        ({"cohort": 2024, "program": "CLC", "status": "defended"}, "NOT_APPLIES"),
+        ({"cohort": 2024, "program": "CLC"}, "UNCLEAR"),
+        ({"cohort": 2024, "status": "active"}, "UNCLEAR"),
     ],
 )
 def test_audience_matching_exclusion_and_missing_attributes(profile, label):
-    constraint = AudienceConstraint(
-        audience_span_id="u", cohorts=["K24"], programs=["CLC"], excluded_statuses=["defended"]
-    )
+    constraint = _listed(cohorts=[2024], programs=["CLC"], excluded_statuses=["defended"])
     assert match_profile(constraint, Profile(profile_id="p", **profile))[0] == label
 
 
-def test_audience_alternatives_and_implicit_abstention():
-    profile = Profile(profile_id="p", cohort="K24")
-    a = AudienceConstraint(audience_span_id="a", cohorts=["K23"])
-    b = AudienceConstraint(audience_span_id="b", cohorts=["K24"])
+@pytest.mark.parametrize(
+    ("scope", "excluded", "profile", "expected"),
+    [
+        ("all_students", [], {"cohort": 2020}, ("APPLIES", "all_students")),
+        (
+            "all_students",
+            ["graduated"],
+            {"status": "graduated"},
+            ("NOT_APPLIES", "excluded_status"),
+        ),
+        ("all_students", ["graduated"], {}, ("UNCLEAR", "missing_profile_attribute")),
+        ("outside_population", [], {"cohort": 2024}, ("NOT_APPLIES", "outside_population")),
+        ("implicit", [], {"cohort": 2024}, ("UNCLEAR", "implicit_audience")),
+    ],
+)
+def test_constraint_scope_decides_label(scope, excluded, profile, expected):
+    constraint = AudienceConstraint(audience_span_id="u", scope=scope, excluded_statuses=excluded)
+    assert match_profile(constraint, Profile(profile_id="p", **profile)) == expected
+
+
+@pytest.mark.parametrize(
+    ("bounds", "cohort", "expected"),
+    [
+        ({"cohort_max": 2024}, 2021, "APPLIES"),
+        ({"cohort_max": 2024}, 2025, "NOT_APPLIES"),
+        ({"cohort_min": 2022, "cohort_max": 2024}, 2022, "APPLIES"),
+        ({"cohort_min": 2022, "cohort_max": 2024}, 2021, "NOT_APPLIES"),
+        ({"cohort_min": 2025}, 2025, "APPLIES"),
+    ],
+)
+def test_cohort_bounds_are_inclusive_admission_years(bounds, cohort, expected):
+    label, _ = match_profile(_listed(**bounds), Profile(profile_id="p", cohort=cohort))
+    assert label == expected
+
+
+def test_degree_level_mismatch_and_missing_level():
+    constraint = _listed(degree_levels=["master"])
+    undergraduate = Profile(profile_id="p", degree_level="undergraduate")
+    assert match_profile(constraint, undergraduate) == ("NOT_APPLIES", "mismatched_degree_level")
+    missing = match_profile(constraint, Profile(profile_id="p"))
+    assert missing == ("UNCLEAR", "missing_profile_attribute")
+
+
+def test_unrepresented_requirement_abstains_but_keeps_known_mismatch():
+    constraint = _listed(cohorts=[2024], unrepresented=True)
+    matching = match_profile(constraint, Profile(profile_id="p", cohort=2024))
+    assert matching == ("UNCLEAR", "unrepresented_requirement")
+    other = match_profile(constraint, Profile(profile_id="p", cohort=2023))
+    assert other == ("NOT_APPLIES", "mismatched_cohort")
+    role_only = _listed(unrepresented=True)
+    assert match_profile(role_only, Profile(profile_id="p"))[0] == "UNCLEAR"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"scope": "listed"},
+        {"scope": "all_students", "cohorts": [2024]},
+        {"scope": "implicit", "excluded_statuses": ["graduated"]},
+        {"scope": "outside_population", "unrepresented": True},
+        {"scope": "listed", "cohorts": [2024], "cohort_max": 2024},
+        {"scope": "listed", "cohort_min": 2025, "cohort_max": 2024},
+        {"scope": "listed", "statuses": ["Active"]},
+        {"scope": "listed", "degree_levels": ["bachelor"]},
+        {"cohorts": [2024]},
+        {"scope": "listed", "cohorts": ["K24"]},
+        {"scope": "listed", "cohorts": [2024], "implicit": True},
+    ],
+)
+def test_audience_constraint_rejects_unsupported_combinations(fields):
+    with pytest.raises(ValueError):
+        AudienceConstraint(audience_span_id="u", **fields)
+
+
+@pytest.mark.parametrize(
+    "fields", [{"cohort": "K24"}, {"status": "dang hoc"}, {"degree_level": "bachelor"}]
+)
+def test_profile_rejects_noncanonical_values(fields):
+    with pytest.raises(ValueError):
+        Profile(profile_id="p", **fields)
+
+
+def test_audience_alternatives_combine_with_or():
+    profile = Profile(profile_id="p", cohort=2024)
+    a = AudienceConstraint(audience_span_id="a", scope="listed", cohorts=[2023])
+    b = AudienceConstraint(audience_span_id="b", scope="listed", cohorts=[2024])
     assert match_audiences([a, b], profile)[0] == "APPLIES"
+    assert match_audiences([a], profile)[0] == "NOT_APPLIES"
     assert match_audiences([], profile)[0] == "UNCLEAR"
-    assert match_profile(b.model_copy(update={"implicit": True}), profile)[0] == "UNCLEAR"
 
 
 def test_generated_pairs_need_adjudicated_unique_documents(notices, annotations):
-    profiles = [Profile(profile_id="p", cohort="K24", major="CNTT", program="CLC")]
+    profiles = [Profile(profile_id="p", cohort=2024, major="CNTT", program="CLC")]
     rows = build_pairs(notices, annotations, profiles)
     assert len(rows) == 6
     assert all(row["label_origin"] == "constraint_rule" for row in rows)
@@ -69,7 +153,7 @@ def test_generated_pairs_need_adjudicated_unique_documents(notices, annotations)
 
 
 def test_unmodeled_conditions_cannot_produce_applies(notices, annotations):
-    profile = Profile(profile_id="p", cohort="K23", status="active")
+    profile = Profile(profile_id="p", cohort=2023, status="active")
     rows = build_pairs(notices, [annotations[1]], [profile])
     assert rows[0]["label"] == "APPLIES"
     assert rows[1]["label"] == "UNCLEAR"

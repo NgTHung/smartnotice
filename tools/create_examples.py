@@ -198,7 +198,15 @@ def main():
                 ],
             )
         ],
-        [{"audience_span_id": "u1", "cohorts": ["K24"], "majors": ["CNTT"], "programs": ["CLC"]}],
+        [
+            {
+                "audience_span_id": "u1",
+                "scope": "listed",
+                "cohorts": [2024],
+                "majors": ["CNTT"],
+                "programs": ["CLC"],
+            }
+        ],
     )
     annotate(
         "thesis",
@@ -232,7 +240,14 @@ def main():
             ),
             ("a2", [{"span_id": "u1"}, {"span_id": "k1"}, {"span_id": "c1"}]),
         ],
-        [{"audience_span_id": "u1", "cohorts": ["K23"], "excluded_statuses": ["defended"]}],
+        [
+            {
+                "audience_span_id": "u1",
+                "scope": "listed",
+                "cohorts": [2023],
+                "excluded_statuses": ["defended"],
+            }
+        ],
     )
     annotate(
         "exam",
@@ -254,7 +269,7 @@ def main():
                 ],
             )
         ],
-        [{"audience_span_id": "u1", "cohorts": ["K24"]}],
+        [{"audience_span_id": "u1", "scope": "listed", "cohorts": [2024]}],
     )
     annotate(
         "briefing",
@@ -276,7 +291,7 @@ def main():
                 ],
             )
         ],
-        [{"audience_span_id": "u1", "cohorts": ["K26"]}],
+        [{"audience_span_id": "u1", "scope": "listed", "cohorts": [2026]}],
     )
     annotate(
         "internship",
@@ -298,7 +313,14 @@ def main():
                 ],
             )
         ],
-        [{"audience_span_id": "u1", "cohorts": ["K22"], "majors": ["CNTT"]}],
+        [
+            {
+                "audience_span_id": "u1",
+                "scope": "listed",
+                "cohorts": [2022],
+                "majors": ["CNTT"],
+            }
+        ],
     )
     write_jsonl(
         ROOT / "data/annotations/examples/events.jsonl",
@@ -307,20 +329,20 @@ def main():
     profiles = [
         {
             "profile_id": "p1",
-            "cohort": "K24",
+            "cohort": 2024,
             "major": "CNTT",
             "program": "CLC",
             "status": "active",
         },
-        {"profile_id": "p2", "cohort": "K23", "major": "CNTT", "program": "CQ", "status": "active"},
+        {"profile_id": "p2", "cohort": 2023, "major": "CNTT", "program": "CQ", "status": "active"},
         {
             "profile_id": "p3",
-            "cohort": "K23",
+            "cohort": 2023,
             "major": "CNTT",
             "program": "CQ",
             "status": "defended",
         },
-        {"profile_id": "p4", "cohort": "K22", "major": "CNTT", "program": "CQ", "status": "active"},
+        {"profile_id": "p4", "cohort": 2022, "major": "CNTT", "program": "CQ", "status": "active"},
         {"profile_id": "p5", "cohort": None, "major": "CNTT", "program": None, "status": None},
     ]
     write_jsonl(ROOT / "data/annotations/examples/profiles.jsonl", profiles)

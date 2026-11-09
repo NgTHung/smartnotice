@@ -9,6 +9,9 @@ SpanLabel = Literal["ACTION", "TIME", "AUDIENCE", "CONDITION", "CHANNEL", "DOCUM
 TimeRole = Literal["START", "DEADLINE", "EVENT_TIME"]
 Applicability = Literal["APPLIES", "NOT_APPLIES", "UNCLEAR"]
 Provider = Literal["gemini", "featherless"]
+AudienceScope = Literal["all_students", "listed", "implicit", "outside_population"]
+DegreeLevel = Literal["undergraduate", "master", "doctoral"]
+StudentStatus = Literal["active", "on_leave", "suspended", "defended", "graduated"]
 
 
 class Record(BaseModel):
@@ -70,13 +73,58 @@ class Event(Record):
 
 
 class AudienceConstraint(Record):
+    """Encode one reviewed AUDIENCE span as profile requirements.
+
+    Cohorts are integer admission years, given either as a list or as inclusive
+    bounds. ``unrepresented`` marks a reviewed requirement that profiles cannot
+    express, such as a class code. The data contract lists the permitted
+    combinations of scope and attributes; others raise ``ValueError``.
+    """
+
     audience_span_id: str
-    cohorts: list[str] = Field(default_factory=list)
+    scope: AudienceScope
+    degree_levels: list[DegreeLevel] = Field(default_factory=list)
+    cohorts: list[int] = Field(default_factory=list)
+    cohort_min: int | None = None
+    cohort_max: int | None = None
     majors: list[str] = Field(default_factory=list)
     programs: list[str] = Field(default_factory=list)
-    statuses: list[str] = Field(default_factory=list)
-    excluded_statuses: list[str] = Field(default_factory=list)
-    implicit: bool = False
+    statuses: list[StudentStatus] = Field(default_factory=list)
+    excluded_statuses: list[StudentStatus] = Field(default_factory=list)
+    unrepresented: bool = False
+
+    def has_inclusion(self) -> bool:
+        """Return whether any inclusion attribute restricts the audience."""
+        return bool(
+            self.degree_levels
+            or self.cohorts
+            or self.cohort_min is not None
+            or self.cohort_max is not None
+            or self.majors
+            or self.programs
+            or self.statuses
+        )
+
+    @model_validator(mode="after")
+    def check_scope(self):
+        span = self.audience_span_id
+        if self.cohorts and (self.cohort_min is not None or self.cohort_max is not None):
+            raise ValueError(f"Use a cohort list or cohort bounds, not both: {span}")
+        if (
+            self.cohort_min is not None
+            and self.cohort_max is not None
+            and self.cohort_min > self.cohort_max
+        ):
+            raise ValueError(f"cohort_min exceeds cohort_max: {span}")
+        if self.scope == "listed" and not (self.has_inclusion() or self.unrepresented):
+            raise ValueError(f"A listed audience needs an attribute or unrepresented: {span}")
+        if self.scope == "all_students" and self.has_inclusion():
+            raise ValueError(f"An all_students audience has no inclusion attributes: {span}")
+        if self.scope in {"implicit", "outside_population"} and (
+            self.has_inclusion() or self.excluded_statuses or self.unrepresented
+        ):
+            raise ValueError(f"A {self.scope} audience carries no attributes: {span}")
+        return self
 
 
 class Annotation(Record):
@@ -88,11 +136,14 @@ class Annotation(Record):
 
 
 class Profile(Record):
+    """Describe one synthetic student; ``cohort`` is an integer admission year."""
+
     profile_id: str
-    cohort: str | None = None
+    cohort: int | None = None
+    degree_level: DegreeLevel | None = None
     major: str | None = None
     program: str | None = None
-    status: str | None = None
+    status: StudentStatus | None = None
 
 
 class ProviderApproval(Record):
