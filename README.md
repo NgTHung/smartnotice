@@ -84,6 +84,29 @@ uv run python tools/run_event_grouping.py
 
 The [event grouping procedure](docs/event-grouping.md) defines the input paths, tentative groups, abstentions, and review requirements. The command refuses an existing output directory; pass a new `--output-dir` for another run.
 
+To assemble the local attributed pair reviews into event groups with separate tasks:
+
+```powershell
+uv run python tools/build_event_groups.py `
+  --notices data/annotations/event-grouping-pilot-2026-11-05/sample_notices.jsonl `
+  --annotations data/annotations/event-grouping-review-2026-11-06/confirmed-ai-v2/annotations.grouping.jsonl `
+  --reviews data/annotations/event-grouping-review-2026-11-06/confirmed-ai-v2/pair_reviews.jsonl `
+  --time-boundaries data/annotations/event-grouping-review-2026-11-06/confirmed-ai-v2/time_boundaries.jsonl `
+  --output-dir data/processed/event-grouping-reviewed
+```
+
+These private inputs come from the local review package. Use your corresponding paths for another corpus. Assistant confirmations retain AI authorship; every output group requires review. Choose a new output directory for each run.
+
+To view a supplied assembly and its source emails locally:
+
+```powershell
+uv run python tools/render_group_review.py --assembly data/processed/event-grouping-user-reviewed-2026-11-09/assembly.json --notices data/annotations/event-grouping-pilot-2026-11-05/sample_notices.jsonl --feedback data/annotations/event-grouping-review-2026-11-06/user-reviewed-2026-11-09/feedback_application.json --output reports/generated/group-review-local.html
+```
+
+Omit `--feedback` when no applied notes ledger exists. Repeat it for successive ledgers targeting the same resulting assembly; the last applied note for each group takes precedence. Export browser notes after reviewing and follow the [feedback procedure](docs/event-grouping.md#áp-dụng-ghi-chú-duyệt-từ-trang-html); notes do not write canonical decisions automatically.
+
+Generated HTML pages, browser archives and exported grouping notes stay outside Git. The reusable source template is `tools/templates/group_review.html.template`; synthetic HTML parser fixtures remain tracked.
+
 ## Find the files
 
 | Path | Purpose |

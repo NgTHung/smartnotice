@@ -21,3 +21,15 @@ data/annotations/*
 !data/annotations/label_studio.xml
 !data/annotations/examples/
 reports/generated/
+
+# Local grouping review pages and downloaded browser previews.
+*.html
+*.htm
+*.mhtml
+*.mht
+*.webarchive
+smartnotice-group-review-notes*.json
+group-review*.metadata.json
+
+# Synthetic parser inputs remain part of the reproducible example corpus.
+!data/raw/examples/**/*.html

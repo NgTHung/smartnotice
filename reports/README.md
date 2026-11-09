@@ -8,6 +8,10 @@ Reports connect data and experiment claims to repeatable outputs. Keep dated val
 - [Validation, 2026-11-04](validation-2026-11-04.md) records the preparation handoff to human review and LLM labeling.
 - [Event grouping pilot, 2026-11-05](validation-2026-11-05-grouping-pilot.md) records the private development sample, AI pair proposals, and source checks.
 - [Event grouping prototype, 2026-11-05](validation-2026-11-05-grouping-prototype.md) records the seeded `hien.json` draft, grouping run, and reproducibility checks.
+- [Event grouping review, 2026-11-06](validation-2026-11-06-grouping-review.md) records the assistant's revised pair proposals, extraction edits, privacy flags, and checks; human decisions remain pending.
+- [Event/task assembly, 2026-11-06](validation-2026-11-06-grouping-assembly.md) records AI confirmations, corrected time evidence, provisional groups, and software/reproduction checks.
+- [Group feedback, 2026-11-09](validation-2026-11-09-group-feedback.md) records user group notes, explicit split resolutions, rebuilt groups, and reproducibility checks.
+- [Singleton approval, 2026-11-09](validation-2026-11-09-singleton-approval.md) records bulk acceptance directed by the user, local review artifacts, and publication checks.
 - [Cleaning run, 2026-11-04](validation-2026-11-04-cleaning-run.md) records the staged run over the email archives after emoji removal.
 - [Name masking, 2026-11-04](validation-2026-11-04-name-masking.md) records the name audit and the staged run after its fixes.
 - [Preprocessing run, 2026-11-04](validation-2026-11-04-preprocessing-run.md) identifies the staged outputs produced at a named commit.

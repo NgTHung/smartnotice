@@ -16,6 +16,8 @@ Khi duyệt, phân biệt ba đơn vị:
 
 Đăng ký tham gia, tham dự và nộp báo cáo của cùng một đợt chương trình là những đầu việc riêng trong cùng nhóm khi có đủ bằng chứng nhận diện. Với chương trình có nhiều vòng hoặc phiên, giữ dấu hiệu nhận diện từng vòng/phiên và nghĩa vụ tương ứng. Một tên chương trình dùng qua nhiều năm không đủ để gộp các đợt độc lập.
 
+Cùng một chương trình cũng chưa đủ để xác nhận cùng sự kiện. Các chuyên đề có nội dung, lịch tham dự và lựa chọn đăng ký độc lập có thể là các sự kiện riêng, dù thuộc cùng khóa hoặc đợt chương trình. Chỉ dùng `DIFFERENT_SESSION` bên trong một nhóm sau khi đã xác định được danh tính sự kiện chung; không dùng quan hệ cùng chương trình để thay bước xác định đó. Khi người duyệt chọn tách rõ từng chuyên đề, lưu các nhóm riêng và giữ tên chương trình trong bằng chứng nguồn.
+
 Một email có thể chứa nhiều mục thông báo thuộc các nhóm khác nhau. So sánh từng mục cùng ngữ cảnh liên quan, không gán toàn bộ email vào một nhóm chỉ vì một mục khớp. Giữ nguyên Notice nguồn và các khóa lần nhắc; cách phân biệt trên phục vụ duyệt, không thêm trường vào định dạng annotation hoặc đầu ra bản thử nghiệm.
 
 ## Ra quyết định cho một cặp
@@ -59,7 +61,7 @@ Các ví dụ dưới đây là tình huống tổng hợp để kiểm tra tiê
 | Hai ngày có ý nghĩa khác nhau | Đăng ký trước 10/11/2026, hội thảo diễn ra ngày 15/11/2026 | Xác định DEADLINE và EVENT_TIME trước khi so sánh. Chỉ xét mâu thuẫn khi cùng vai trò, đầu việc và phiên; hai mốc khác vai trò không đủ để tách nhóm. |
 | Đổi cách gọi hoặc nguồn gửi | Phòng Công tác sinh viên dùng tên tiếng Anh, khoa chuyển tiếp bằng tên viết tắt tiếng Việt | Đối chiếu mã sự kiện, biểu mẫu riêng của đợt, đơn vị tổ chức và ngày diễn ra. Khác tiêu đề hoặc người gửi là bằng chứng yếu; chỉ xác nhận bí danh khi có căn cứ. |
 | Lịch, địa điểm hoặc trạng thái thay đổi | Chuyển sang phòng B203, tạm hoãn hoặc mở lại đăng ký | Dùng `UPDATE_OF` khi nhận diện được bản trước và nguồn nói rõ thay đổi, kể cả khi chỉ nêu giá trị mới. Nếu hai nguồn chỉ ghi khác nhau mà không giải thích được, dùng `UNCLEAR`. |
-| Một chương trình có nhiều phiên hoặc vòng | Tuần lễ định hướng có lịch ca sáng và ca chiều | Khi có bằng chứng cùng đợt chương trình, dùng `SAME_EVENT` ở cấp nhóm và giữ riêng từng phiên. Nếu sinh viên phải dự ca được phân, giữ riêng nghĩa vụ và điều kiện áp dụng của từng ca. Nếu là hai đợt độc lập, dùng `DIFFERENT_EVENT`. |
+| Một chương trình có nhiều phiên hoặc vòng | Tuần lễ định hướng có ca sáng/chiều; chuỗi kỹ năng có nhiều chuyên đề | Phân biệt các ca của cùng hoạt động với những chuyên đề độc lập. Với cùng hoạt động có bằng chứng nhận diện, giữ nhóm và từng ca; với chuyên đề có nội dung, lịch và lựa chọn tham dự độc lập, giữ nhóm riêng. Khác ngày đơn thuần chưa đủ để tách. |
 | Một email chứa nhiều sự kiện | Bản tin có mục học bổng và mục hội thảo; email sau chỉ nhắc hạn học bổng | Chỉ so mục học bổng với lời nhắc tương ứng. Mục hội thảo giữ nhóm riêng khi có bằng chứng là sự kiện độc lập. |
 
 ## Kiểm tra chuỗi nhắc và cập nhật
@@ -126,6 +128,38 @@ Một cặp chỉ được đề xuất gộp tự động khi câu bằng chứ
 `UPDATE_CANDIDATE` biểu thị có dấu hiệu cập nhật cần xác định mục tiêu và chiều; chưa phải quyết định `UPDATE_OF` của người duyệt. Mọi giá trị gốc được giữ nguyên. Do yêu cầu bằng chứng trùng khá chặt, bản thử nghiệm có thể bỏ sót các cách diễn đạt khác nhau của cùng sự kiện, thông báo gia hạn ít giống bản gốc và thông tin nhận diện nằm ngoài các câu được mô hình chọn. Cũng có thể gộp nhầm khi hai sự kiện khác nhau dùng cùng đoạn nguồn và cùng mốc ngày; mọi nhóm đầu ra vẫn cần review.
 
 Mở `review_groups.md` để đọc các nhóm có nhiều thành viên, rồi kiểm tra `events.jsonl` và `pair_decisions.jsonl` để truy vết nguồn và lý do. Không dùng số nhóm làm độ chính xác. Thời gian chạy chỉ mô tả lần chạy có cấu hình trong `run.json`; chưa có tối ưu hay so sánh hiệu năng.
+
+## Dựng nhóm từ quyết định có tác giả
+
+Sau khi đối chiếu nguồn và sửa trích xuất, lưu quyết định theo `GroupingReview` trong [contract](interface.md#assemble-event-groups-and-tasks). Ghi tác giả thực, thời điểm, hash annotation và bằng chứng cho mỗi cặp. Xác nhận của trợ lý dùng `reviewer_id="ai_assistant"`, `reviewer_kind="ai_assistant"`; không điền thay các ô xác nhận của con người hoặc approvals riêng tư. Các quyết định AI có thể dùng để dựng nhóm đề xuất, với yêu cầu duyệt được giữ nguyên.
+
+Phân biệt quan hệ nhóm, đầu việc và thông báo. Chọn `SAME_TASK` cho cùng việc được nhắc lại hoặc sửa; dùng `DIFFERENT_TASK`, `DIFFERENT_SESSION` hoặc `CONDITIONAL_TASK` khi cần giữ riêng nghĩa vụ. Chỉ ghi `REMINDER` khi nguồn có căn cứ nhắc lại; bản nội dung lặp nhưng không nêu lời nhắc dùng `REPEATED_NOTICE`. Mỗi `UPDATE_OF` cần chỉ rõ giá trị cũ/mới của từng trường và chiều từ bản mới tới bản trước; giá trị cũ chưa biết để trống.
+
+Giữ cả cụm thời gian khi giờ và ngày thuộc cùng một hạn, chẳng hạn “trước 8g00 ngày 29/6/2026”. Với giờ/ngày bị tách qua hai câu, giữ spans đúng nguồn và ghi `TimeBoundaryReview.value_key` khi đã đối chiếu rằng chúng bổ sung cho cùng một mốc. Không ghép văn bản nguồn để tạo span mới. Với khoảng diễn ra hoặc tạm dừng, ghi nhận mốc cuối bằng `boundary="END"` trong đầu ra gộp nhóm. Đây là diễn giải có tác giả trên TIME hiện có, không thêm nhãn END vào Annotation hoặc Label Studio.
+
+Lệnh dựng nhóm nằm trong [README](../README.md). Đọc `review_groups.md` cùng `assembly.json` để kiểm tra nhóm, từng đầu việc/phiên, giá trị đang được giữ và lịch sử thay đổi. Đầu ra có ba loại mâu thuẫn cần xử lý:
+
+| Mâu thuẫn | Cách xử lý của bộ dựng nhóm |
+|---|---|
+| `group_contradiction` | Một chuỗi cùng nhóm chứa quyết định khác nhóm hoặc chưa rõ; giữ các thành viên thành nhóm đơn |
+| `task_contradiction` | Chuỗi cùng đầu việc chứa quyết định tách việc/phiên; giữ nhóm sự kiện nhưng tách các đầu việc |
+| `competing_values` | Còn nhiều giá trị thời gian, địa điểm hoặc trạng thái chưa có cập nhật giải quyết; giữ tất cả, không chọn hạn muộn nhất |
+
+Thiếu quyết định cho một cặp không tạo nhãn phủ định. Bộ dựng nhóm giữ mọi lần nhắc đầu vào, kể cả nhóm đơn; nó không tự nhận diện thêm sự kiện, xử lý eligibility hoặc chốt nhóm chính thức. Chỉ đưa phạm vi đã chọn vào file annotation dùng cho gộp; nếu dùng tập con, tạo lại hashes của tập con và ghi rõ những dự đoán chưa được rà soát bị loại khỏi lần dựng nhóm.
+
+Kiểm tra chuỗi mở đăng ký, nhắc và gia hạn cho kết quả một nhóm, một đầu việc, ba thông báo; thêm check-in phải giữ một nhóm và hai đầu việc. Kiểm tra thêm nhiều phiên, nghĩa vụ theo điều kiện, email nhiều sự kiện, cập nhật địa điểm/trạng thái, mâu thuẫn bắc cầu và chuỗi cập nhật quay về giá trị cũ. Các kiểm thử tổng hợp xác minh phần mềm; đánh giá chất lượng cần nhãn và thiết kế đo phù hợp theo [quy trình đánh giá](evaluation.md).
+
+## Áp dụng ghi chú duyệt từ trang HTML
+
+Trang HTML lưu trạng thái và ghi chú nháp trên trình duyệt; nút xuất tạo JSON gắn với `assembly_fingerprint` của đúng bản đã xem. Lưu nguyên file này trong thư mục riêng tư. Những nhóm không có trong file xuất không được tính là đã duyệt; trạng thái `looks_ok` chỉ xác nhận nhận xét ở cấp nhóm, không tự phê duyệt tất cả span, thời gian, eligibility hoặc quyền chia sẻ dữ liệu.
+
+`apply_group_feedback` trong [`group_feedback.py`](../src/labeling/group_feedback.py) kiểm tra fingerprint và nhận phương án xử lý tường minh. Với `suggest_split`, người áp dụng phải cung cấp đầy đủ các phần của nhóm hoặc xác định nội dung bổ sung cần tách. Không đoán các phần từ câu ghi chú. Khi tách một nhóm, thay các cạnh gộp băng qua phần đã tách bằng `DIFFERENT_EVENT` để không giữ lại chuỗi gộp cũ gây mâu thuẫn.
+
+Giữ ghi chú người dùng, thời điểm gốc, hash file và phương án áp dụng trong ledger riêng. Các quyết định cặp được suy ra từ ghi chú có tác giả áp dụng là `ai_assistant`; chúng không trở thành annotation cặp độc lập của con người. Khi bổ sung các mục từ một email nhiều nội dung, kiểm tra source spans, mở rộng tập annotation và gắn lại hashes cho những lần nhắc cũ có nội dung không đổi. Không tách phần lịch nhắc đúng sự kiện chỉ vì email đó còn có một ưu đãi khác.
+
+Khi người dùng chỉ đạo duyệt đồng ý hàng loạt trong hội thoại, lưu nguyên chỉ đạo, tiêu chí chọn nhóm, fingerprint và danh sách ID được áp dụng trong một bản ghi riêng. Thời điểm ghi nhận là lúc áp dụng chỉ đạo, không phải thời điểm quan sát người dùng đọc từng nhóm. Có thể chuyển chỉ đạo thành ghi chú `looks_ok` để hiển thị; không suy ra xác nhận độc lập từng cặp, span hoặc clearance riêng tư. Giữ nguyên bản xuất trình duyệt trước đó.
+
+Xuất lại trang HTML từ kết quả đã dựng, kèm ledger áp dụng góp ý để người duyệt đối chiếu. Trang mặc định cho xem mọi nhóm và các đoạn nguồn liên quan; bật toàn văn khi cần. Các ghi chú bổ sung ở bản mới được lưu theo fingerprint mới, tách khỏi bản đã dùng làm đầu vào.
 
 ## Đọc mẫu ngẫu nhiên hien.json
 
