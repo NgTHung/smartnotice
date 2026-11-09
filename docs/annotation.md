@@ -79,10 +79,11 @@ Set `unrepresented=true` and keep the representable attributes when the audience
 ## Generate applicability examples
 
 ```powershell
-uv run smartnotice build-pairs --annotations data/annotations/adjudicated.jsonl --profiles data/annotations/examples/profiles.jsonl
+uv run smartnotice generate-profiles --annotations data/annotations/adjudicated.jsonl --output data/processed/profiles.jsonl
+uv run smartnotice build-pairs --annotations data/annotations/adjudicated.jsonl --profiles data/processed/profiles.jsonl
 ```
 
-Use one adjudicated annotation per document. Design synthetic profiles to cover matches, attribute mismatches, excluded statuses, and missing attributes. Profiles use the same canonical values as constraints: admission year, degree level, logged major and program codes, and status codes. Keep rule provenance for auditing and review a sample of generated labels independently. Preserve document-level split inheritance as required by the contract.
+Use one adjudicated annotation per document. `generate-profiles` designs synthetic profiles from the `listed` and `all_students` constraints. For each constraint it adds a matching profile and, for each requirement, a known mismatch and a profile missing that attribute. Each excluded status adds an excluded profile. A requirement gets no mismatch profile when the constraints contain no other value for that major or program. Values come only from the constraints, with the neighbouring admission years added, so profiles never introduce an unlogged code. The command uses `DEFAULT_SEED` unless you pass `--seed`, and it writes `profiles.record.json` next to the output with the seed, the annotation hash, counts, and `profile_set_sha256`. Keep rule provenance for auditing and review a sample of generated labels independently. Preserve document-level split inheritance as required by the contract.
 
 ## Measure annotation quality
 

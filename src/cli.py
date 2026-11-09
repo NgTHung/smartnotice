@@ -11,8 +11,9 @@ from smartnotice.collectors.local import collect_email, save_source
 from smartnotice.collectors.web import WebCollector
 from smartnotice.demo import run_demo
 from smartnotice.io import read_jsonl, write_jsonl
-from smartnotice.labeling.llm import require_provider_approval
+from smartnotice.labeling.llm import json_sha256, require_provider_approval
 from smartnotice.labeling.pairs import build_pairs
+from smartnotice.labeling.profiles import generate_profiles
 from smartnotice.labeling.providers import configured_model, load_local_env
 from smartnotice.labeling.studio import (
     export_tasks,
@@ -83,6 +84,14 @@ def main(argv: list[str] | None = None) -> None:
     reviewed.add_argument("--predictions", type=Path, required=True, help="Original saved tasks")
     reviewed.add_argument("--output", type=Path, required=True)
     reviewed.add_argument("--review-log", type=Path, required=True)
+    profile_parser = commands.add_parser(
+        "generate-profiles", help="Design seeded synthetic profiles from audience constraints"
+    )
+    profile_parser.add_argument("--annotations", type=Path, required=True)
+    profile_parser.add_argument(
+        "--output", type=Path, default=Path("data/processed/profiles.jsonl")
+    )
+    profile_parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     for name in [
         "split",
         "quality",
@@ -194,6 +203,22 @@ def main(argv: list[str] | None = None) -> None:
             print(
                 f"Imported {len(annotations)} reviewed annotations; logged {len(reviews)} decisions"
             )
+        elif args.command == "generate-profiles":
+            annotations = _load(args.annotations, Annotation)
+            constraints = [c for a in annotations for c in a.audience_constraints]
+            designed = [
+                p.model_dump(mode="json") for p in generate_profiles(constraints, args.seed)
+            ]
+            record = {
+                "seed": args.seed,
+                "annotations_sha256": json_sha256([a.model_dump(mode="json") for a in annotations]),
+                "constraint_count": len(constraints),
+                "profile_count": len(designed),
+                "profile_set_sha256": json_sha256(designed),
+            }
+            write_jsonl(args.output, designed)
+            _json(args.output.with_suffix(".record.json"), record)
+            print(f"Generated {len(designed)} profiles: {args.output}")
         else:
             notices = _load(args.notices, Notice)
             if args.command == "split":
