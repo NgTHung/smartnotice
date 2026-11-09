@@ -24,7 +24,11 @@ Each annotation contains an anonymized annotator ID, spans, events, and reviewed
 
 TIME arguments require START, DEADLINE, or EVENT_TIME. They may carry `normalized_date` and `inferred`. Other arguments cannot carry time metadata. An inferred date requires a reference date and a normalized value. A date interval uses separate TIME spans for its endpoints.
 
-Audience constraints contain inclusion lists for cohorts, majors, programs, and statuses, an excluded-status list, and an implicit-audience flag. Inclusion attributes combine with AND, values inside an attribute combine with OR, and separate audience branches combine with OR. Encode common exclusions in every branch. Curators resolve abbreviations to shared codes; the matcher only normalizes case and whitespace. Unrepresented conditions require manual review.
+Each audience constraint references one AUDIENCE span and has a `scope`: `all_students`, `listed`, `implicit`, or `outside_population`. The population is university learners; institution names do not restrict it.
+
+A `listed` constraint holds inclusion attributes: `degree_levels` (`undergraduate`, `master`, `doctoral`), `cohorts` as integer admission years or inclusive `cohort_min`/`cohort_max` bounds, `majors`, `programs`, and `statuses`. Status values come from `active`, `on_leave`, `suspended`, `defended`, and `graduated`. A constraint uses either the cohort list or the bounds. A `listed` constraint needs at least one inclusion attribute or `unrepresented=true`. An `all_students` constraint has no inclusion attributes. Both scopes may carry `excluded_statuses`. `implicit` and `outside_population` constraints carry no attributes. Validation rejects any other combination.
+
+`unrepresented=true` records a reviewed audience requirement that profiles cannot express, such as a class code or role. Inclusion attributes combine with AND, values inside an attribute combine with OR, and separate audience branches combine with OR. Encode common exclusions in every branch. Curators resolve abbreviations to shared codes and convert years of study to admission years with the procedure in the [annotation protocol](annotation.md); the matcher only normalizes case and whitespace.
 
 ## Keep model suggestions and human reviews traceable
 
@@ -38,11 +42,24 @@ Real notices require a `ProviderApproval` JSONL row matching the prepared-text h
 
 ## Derive applicability rows
 
-Synthetic profiles contain a profile ID plus optional cohort, major, program, and status. The rule matcher returns NOT_APPLIES for a known exclusion or mismatch, UNCLEAR for implicit/unspecified audiences or missing required profile attributes, and APPLIES when every explicit requirement matches. Absence of a reviewed constraint produces UNCLEAR.
+Synthetic profiles contain a profile ID plus optional `cohort` (integer admission year), `degree_level`, `major`, `program`, and `status`, using the constraint value sets. The rule matcher evaluates one constraint in this order:
 
-Pair generation also abstains when an otherwise matching event has a free-form CONDITION. The profile schema cannot resolve that condition. A known audience mismatch remains NOT_APPLIES.
+| Case | Label | `rule_reason` |
+|---|---|---|
+| `scope=implicit` | UNCLEAR | `implicit_audience` |
+| `scope=outside_population` | NOT_APPLIES | `outside_population` |
+| Profile status is in `excluded_statuses` | NOT_APPLIES | `excluded_status` |
+| A known profile attribute fails a `listed` requirement | NOT_APPLIES | `mismatched_<attribute>` |
+| A required profile attribute is missing | UNCLEAR | `missing_profile_attribute` |
+| `unrepresented=true` | UNCLEAR | `unrepresented_requirement` |
+| `scope=all_students` | APPLIES | `all_students` |
+| Every `listed` requirement matches | APPLIES | `all_constraints_match` |
 
-Generated pairs retain `doc_id`, event/profile IDs, original evidence text, profile fields, a label, and rule provenance. They are silver labels derived from annotations, not independent human judgments. Model inputs exclude constraint fields, label provenance, and rule reasons. Assign pair splits by joining document split assignments; never split pairs independently.
+A profile without a status matches no exclusion and falls under `missing_profile_attribute` when the constraint lists `excluded_statuses`. The first matching row decides the label. Absence of a reviewed constraint produces UNCLEAR, and an event without an AUDIENCE argument produces UNCLEAR with `no_audience_constraint`.
+
+Pair generation also abstains when an otherwise matching event has a CONDITION argument. CONDITION marks eligibility requirements, which the profile schema cannot resolve. A known audience mismatch remains NOT_APPLIES.
+
+Generated pairs retain `doc_id`, event/profile IDs, original evidence text, profile fields, a label, and rule provenance. `annotation_sha256` hashes the curated annotation row and `profile_set_sha256` hashes the ordered list of profile rows, both as canonical JSON with sorted keys. They are silver labels derived from annotations, not independent human judgments. Model inputs exclude constraint fields, label provenance, and rule reasons. Assign pair splits by joining document split assignments; never split pairs independently.
 
 ## Separate evaluation groups
 
