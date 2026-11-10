@@ -30,6 +30,9 @@ def quality_summary(notices: list[Notice], splits: list[dict]) -> dict:
         "privacy_review_required": sum(notice.privacy_review_required for notice in notices),
         "sentence_count": sum(len(notice.sentences) for notice in notices),
         "empty_documents": sum(not notice.text.strip() for notice in notices),
+        "non_bmp_documents": sum(
+            any(ord(character) > 0xFFFF for character in notice.text) for notice in notices
+        ),
         "split_counts": dict(Counter(row["split"] for row in splits)),
         "split_group_leaks": leaks,
     }

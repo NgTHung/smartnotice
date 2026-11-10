@@ -1,9 +1,10 @@
 import hashlib
+from difflib import SequenceMatcher
 
 import pytest
 from smartnotice.io import write_jsonl
 from smartnotice.preprocessing.pipeline import prepare
-from smartnotice.preprocessing.split import split_documents
+from smartnotice.preprocessing.split import group_documents, split_documents
 from smartnotice.quality import quality_summary
 
 
@@ -20,7 +21,10 @@ def test_manifest_path_cannot_escape_source_root(tmp_path):
     source = tmp_path / "outside.eml"
     source.write_text("Notice", encoding="utf-8")
     manifest = tmp_path / "raw/manifest.jsonl"
-    write_jsonl(manifest, [{"path": "../outside.eml", "source_type": "email"}])
+    write_jsonl(
+        manifest,
+        [{"path": "../outside.eml", "source_type": "email", "consent_ref": "synthetic-test"}],
+    )
     with pytest.raises(ValueError, match="leaves"):
         prepare(manifest, tmp_path / "output.jsonl")
 
@@ -29,7 +33,9 @@ def test_content_hash_uses_unchanged_raw_bytes(tmp_path):
     raw = b"Content-Type: text/plain; charset=utf-8\n\nNotice."
     (tmp_path / "notice.eml").write_bytes(raw)
     manifest = tmp_path / "manifest.jsonl"
-    write_jsonl(manifest, [{"path": "notice.eml", "source_type": "email"}])
+    write_jsonl(
+        manifest, [{"path": "notice.eml", "source_type": "email", "consent_ref": "synthetic-test"}]
+    )
     result = prepare(manifest, tmp_path / "output.jsonl")
     assert result[0].raw_sha256 == hashlib.sha256(raw).hexdigest()
     assert (tmp_path / "notice.eml").read_bytes() == raw
@@ -70,3 +76,45 @@ def test_quality_rejects_duplicate_assignments(notices):
     assignments = split_documents(notices)
     with pytest.raises(ValueError, match="unique document"):
         quality_summary(notices, [*assignments, assignments[0]])
+
+
+def test_prepare_rejects_real_email_without_consent_reference(tmp_path):
+    (tmp_path / "notice.eml").write_bytes(b"Content-Type: text/plain\n\nNotice.")
+    manifest = tmp_path / "manifest.jsonl"
+    write_jsonl(manifest, [{"path": "notice.eml", "source_type": "email"}])
+    output = tmp_path / "output.jsonl"
+    with pytest.raises(ValueError, match="Manifest line 1: .*consent"):
+        prepare(manifest, output)
+    assert not output.exists()
+
+
+def _with_text(notice, text, group):
+    return notice.model_copy(update={"text": text, "group_id": group})
+
+
+def test_dissimilar_pairs_skip_full_similarity(notices, monkeypatch):
+    calls = []
+    full_ratio = SequenceMatcher.ratio
+    monkeypatch.setattr(SequenceMatcher, "ratio", lambda self: calls.append(1) or full_ratio(self))
+    pair = [_with_text(notices[0], "a" * 200, "g1"), _with_text(notices[1], "b" * 200, "g2")]
+    assert len(set(group_documents(pair).values())) == 2
+    assert not calls
+
+
+def test_similarity_threshold_still_decides_near_duplicates(notices):
+    pair = [
+        _with_text(notices[0], "x" * 95 + "yyyyy", "g1"),
+        _with_text(notices[1], "x" * 95 + "zzzzz", "g2"),
+    ]
+    assert len(set(group_documents(pair, 0.9).values())) == 1
+    assert len(set(group_documents(pair, 0.99).values())) == 2
+
+
+def test_split_rows_record_grouping_settings(notices):
+    assert {row["similarity"] for row in split_documents(notices, similarity=0.85)} == {0.85}
+
+
+def test_quality_counts_documents_with_non_bmp_characters(notices):
+    selected = [_with_text(notices[0], "Hạn nộp 📌", "g1"), notices[1]]
+    report = quality_summary(selected, split_documents(selected))
+    assert report["non_bmp_documents"] == 1

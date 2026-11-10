@@ -33,6 +33,8 @@ def export_tasks(notices: list[Notice]) -> list[dict]:
             "data": {
                 "doc_id": notice.doc_id,
                 "text": notice.text,
+                "attachments": list(notice.attachments),
+                "privacy_review_required": notice.privacy_review_required,
                 "source_type": notice.source_type,
                 "reference_date": str(notice.reference_date) if notice.reference_date else "",
                 "sentences": [sentence.model_dump() for sentence in notice.sentences],
