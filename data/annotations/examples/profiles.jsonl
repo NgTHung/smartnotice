@@ -1,5 +1,5 @@
-{"profile_id": "p1", "cohort": "K24", "major": "CNTT", "program": "CLC", "status": "active"}
-{"profile_id": "p2", "cohort": "K23", "major": "CNTT", "program": "CQ", "status": "active"}
-{"profile_id": "p3", "cohort": "K23", "major": "CNTT", "program": "CQ", "status": "defended"}
-{"profile_id": "p4", "cohort": "K22", "major": "CNTT", "program": "CQ", "status": "active"}
+{"profile_id": "p1", "cohort": 2024, "major": "CNTT", "program": "CLC", "status": "active"}
+{"profile_id": "p2", "cohort": 2023, "major": "CNTT", "program": "CQ", "status": "active"}
+{"profile_id": "p3", "cohort": 2023, "major": "CNTT", "program": "CQ", "status": "defended"}
+{"profile_id": "p4", "cohort": 2022, "major": "CNTT", "program": "CQ", "status": "active"}
 {"profile_id": "p5", "cohort": null, "major": "CNTT", "program": null, "status": null}

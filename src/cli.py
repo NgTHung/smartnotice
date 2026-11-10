@@ -14,10 +14,12 @@ from smartnotice.io import read_jsonl, write_jsonl
 from smartnotice.labeling.llm import (
     has_privacy_clearance,
     has_provider_approval,
+    json_sha256,
     privacy_review_queue,
     require_provider_approval,
 )
 from smartnotice.labeling.pairs import build_pairs
+from smartnotice.labeling.profiles import generate_profiles
 from smartnotice.labeling.providers import configured_model, load_local_env
 from smartnotice.labeling.studio import (
     export_tasks,
@@ -113,6 +115,14 @@ def main(argv: list[str] | None = None) -> None:
     reviewed.add_argument("--predictions", type=Path, required=True, help="Original saved tasks")
     reviewed.add_argument("--output", type=Path, required=True)
     reviewed.add_argument("--review-log", type=Path, required=True)
+    profile_parser = commands.add_parser(
+        "generate-profiles", help="Design seeded synthetic profiles from audience constraints"
+    )
+    profile_parser.add_argument("--annotations", type=Path, required=True)
+    profile_parser.add_argument(
+        "--output", type=Path, default=Path("data/processed/profiles.jsonl")
+    )
+    profile_parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     for name in [
         "split",
         "quality",
@@ -154,6 +164,11 @@ def main(argv: list[str] | None = None) -> None:
             command.add_argument("--annotations", type=Path, required=True)
             if name == "build-pairs":
                 command.add_argument("--profiles", type=Path, required=True)
+                command.add_argument(
+                    "--assume-all-students-without-audience",
+                    action="store_true",
+                    help="Record an all-learners default for events without AUDIENCE",
+                )
                 command.add_argument(
                     "--output", type=Path, default=Path("data/processed/applicability.jsonl")
                 )
@@ -273,6 +288,22 @@ def main(argv: list[str] | None = None) -> None:
             print(
                 f"Imported {len(annotations)} reviewed annotations; logged {len(reviews)} decisions"
             )
+        elif args.command == "generate-profiles":
+            annotations = _load(args.annotations, Annotation)
+            constraints = [c for a in annotations for c in a.audience_constraints]
+            designed = [
+                p.model_dump(mode="json") for p in generate_profiles(constraints, args.seed)
+            ]
+            record = {
+                "seed": args.seed,
+                "annotations_sha256": json_sha256([a.model_dump(mode="json") for a in annotations]),
+                "constraint_count": len(constraints),
+                "profile_count": len(designed),
+                "profile_set_sha256": json_sha256(designed),
+            }
+            write_jsonl(args.output, designed)
+            _json(args.output.with_suffix(".record.json"), record)
+            print(f"Generated {len(designed)} profiles: {args.output}")
         else:
             notices = _load(args.notices, Notice)
             if args.command == "split":
@@ -311,7 +342,15 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"Validated {len(annotations)} annotations")
                 else:
                     profiles = _load(args.profiles, Profile)
-                    write_jsonl(args.output, build_pairs(notices, annotations, profiles))
+                    write_jsonl(
+                        args.output,
+                        build_pairs(
+                            notices,
+                            annotations,
+                            profiles,
+                            assume_all_students_without_audience=args.assume_all_students_without_audience,
+                        ),
+                    )
     except ValidationError:
         parser.exit(1, "smartnotice: schema validation failed; inspect the input locally\n")
     except (ValueError, KeyError, OSError, httpx.HTTPError) as exc:
