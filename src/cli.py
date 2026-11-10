@@ -123,6 +123,11 @@ def main(argv: list[str] | None = None) -> None:
             if name == "build-pairs":
                 command.add_argument("--profiles", type=Path, required=True)
                 command.add_argument(
+                    "--assume-all-students-without-audience",
+                    action="store_true",
+                    help="Record an all-learners default for events without AUDIENCE",
+                )
+                command.add_argument(
                     "--output", type=Path, default=Path("data/processed/applicability.jsonl")
                 )
     args = parser.parse_args(argv)
@@ -242,7 +247,15 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"Validated {len(annotations)} annotations")
                 else:
                     profiles = _load(args.profiles, Profile)
-                    write_jsonl(args.output, build_pairs(notices, annotations, profiles))
+                    write_jsonl(
+                        args.output,
+                        build_pairs(
+                            notices,
+                            annotations,
+                            profiles,
+                            assume_all_students_without_audience=args.assume_all_students_without_audience,
+                        ),
+                    )
     except ValidationError:
         parser.exit(1, "smartnotice: schema validation failed; inspect the input locally\n")
     except (ValueError, KeyError, OSError, httpx.HTTPError) as exc:
