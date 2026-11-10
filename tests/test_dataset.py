@@ -109,6 +109,10 @@ def test_fetch_catalog_matches_text_and_maps_changed_raw(corpus, tmp_path, chang
             assert not provenance["raw_hash_matches_catalog"]
             assert provenance["doc_id"] != provenance["catalog_doc_id"]
             assert read_jsonl(output / "prepared/notices.jsonl")[0]["privacy_review_required"]
+            rebuilt = read_jsonl(output / "prepared/notices.jsonl")[0]
+            assert rebuilt["publication_date_candidate"] == "2026-11-06"
+            assert "publication_date_status" not in rebuilt
+            assert rebuilt["reference_date"] is None
 
 
 def test_fetch_rejects_external_url_before_io(corpus, tmp_path):

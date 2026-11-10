@@ -260,6 +260,9 @@ def crawl_web(
                 url=final_url,
                 selector=adapter.body_selector,
                 reference_date=None,
+                publication_date_candidate=(
+                    detail.date_candidate.isoformat() if detail.date_candidate else None
+                ),
                 group_id=group_id,
                 domain_holdout=domain_holdout,
             )

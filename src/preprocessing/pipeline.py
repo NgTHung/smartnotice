@@ -47,6 +47,7 @@ def prepare(manifest: Path, output: Path) -> list[Notice]:
             source_type=row["source_type"],
             source_ref=f"local:{digest}" if row["source_type"] == "email" else row["source_ref"],
             raw_sha256=digest,
+            publication_date_candidate=row.get("publication_date_candidate"),
             reference_date=reference,
             reference_date_origin=origin,
             text=text,

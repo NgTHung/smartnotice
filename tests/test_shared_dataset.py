@@ -30,8 +30,31 @@ def test_shipped_snapshot_validates_without_raw_or_network(snapshot):
     assert not (snapshot / "raw").exists()
 
 
+def test_shared_notices_include_unverified_publication_dates(snapshot):
+    index = {row["doc_id"]: row for row in read_jsonl(snapshot / "snapshot_index.jsonl")}
+    for notice in read_jsonl(snapshot / "notices.jsonl"):
+        source = index[notice["doc_id"]]
+        assert notice["publication_date_candidate"] == source["publication_date_candidate"]
+        assert "publication_date_status" not in notice
+        assert notice["reference_date"] is None
+        assert notice["reference_date_origin"] == "missing"
+
+
 @pytest.mark.parametrize(
-    "damage", ["unknown_field", "source", "missing", "text", "summary", "date", "offsets", "review"]
+    "damage",
+    [
+        "unknown_field",
+        "source",
+        "missing",
+        "text",
+        "summary",
+        "date",
+        "offsets",
+        "review",
+        "notice_date",
+        "notice_date_status",
+        "missing_notice_date",
+    ],
 )
 def test_shared_snapshot_rejects_corruption(snapshot, damage):
     index = read_jsonl(snapshot / "snapshot_index.jsonl")
@@ -51,6 +74,12 @@ def test_shared_snapshot_rejects_corruption(snapshot, damage):
         p.write_text(json.dumps(summary), encoding="utf-8")
     elif damage == "date":
         index[0]["publication_date_candidate"] = "2000-01-01"
+    elif damage == "notice_date":
+        notices[0]["publication_date_candidate"] = "2000-01-01"
+    elif damage == "notice_date_status":
+        notices[0]["publication_date_status"] = "missing"
+    elif damage == "missing_notice_date":
+        notices[0].pop("publication_date_candidate", None)
     elif damage == "offsets":
         notices[0]["sentences"] = []
     else:

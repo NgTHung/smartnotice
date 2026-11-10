@@ -152,6 +152,7 @@ class Notice(Record):
     source_type: Literal["email", "web"]
     source_ref: str
     raw_sha256: str
+    publication_date_candidate: date | None = None
     reference_date: date | None = None
     reference_date_origin: Literal["email_header", "published", "missing"]
     text: str

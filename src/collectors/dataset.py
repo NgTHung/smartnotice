@@ -187,6 +187,10 @@ def validate_corpus(root: Path, expected_counts: dict[str, int]) -> dict:
             or row.publication_date_status != detail.date_status
             or notice.reference_date is not None
             or row.reference_date is not None
+            or (
+                notice.publication_date_candidate is not None
+                and notice.publication_date_candidate != row.publication_date_candidate
+            )
         ):
             raise ValueError(f"Date evidence mismatch or unreviewed reference date: {row.doc_id}")
         if not (
@@ -271,6 +275,7 @@ def export_team_snapshot(root: Path, destination: Path) -> dict:
         shared = Notice.model_validate(
             {
                 **notice.model_dump(),
+                "publication_date_candidate": row["publication_date_candidate"],
                 "text": text,
                 "sentences": segment_sentences(text),
                 "redaction_count": notice.redaction_count + added,
@@ -389,6 +394,7 @@ def validate_team_snapshot(directory: Path) -> dict:
             or notice.reference_date_origin != "missing"
             or row.publication_date_candidate != source.publication_date_candidate
             or row.publication_date_status != source.publication_date_status
+            or notice.publication_date_candidate != row.publication_date_candidate
         ):
             raise ValueError(f"Shared dates/review metadata mismatch: {row.doc_id}")
         if any(p.search(notice.text) for p in [_SHARE_PHONE, _CONTACT_NAME, _INLINE_CONTACT]):
@@ -477,6 +483,9 @@ def fetch_catalog(collector: WebCollector, catalog: Path, destination: Path) -> 
                 url=final_url,
                 selector=adapter.body_selector,
                 reference_date=None,
+                publication_date_candidate=(
+                    detail.date_candidate.isoformat() if detail.date_candidate else None
+                ),
             )
             provenance.append(
                 {

@@ -36,6 +36,37 @@ def test_content_hash_uses_unchanged_raw_bytes(tmp_path):
     assert result[0].reference_date is None
 
 
+@pytest.mark.parametrize(
+    "candidate,status",
+    [
+        ("2026-11-06", "unverified"),
+        (None, "missing"),
+        (None, "invalid"),
+        ("2026-11-06", "conflict"),
+    ],
+)
+def test_prepare_preserves_publication_evidence_without_promoting_it(tmp_path, candidate, status):
+    (tmp_path / "notice.html").write_text("<article>Notice.</article>", encoding="utf-8")
+    manifest = tmp_path / "manifest.jsonl"
+    write_jsonl(
+        manifest,
+        [
+            {
+                "path": "notice.html",
+                "source_type": "web",
+                "source_ref": "https://example.invalid/1",
+                "publication_date_candidate": candidate,
+                "publication_date_status": status,
+            }
+        ],
+    )
+    notice = prepare(manifest, tmp_path / "output.jsonl")[0].model_dump(mode="json")
+    assert notice["publication_date_candidate"] == candidate
+    assert "publication_date_status" not in notice
+    assert notice["reference_date"] is None
+    assert notice["reference_date_origin"] == "missing"
+
+
 def test_splits_are_repeatable_and_never_leak_groups(notices):
     assignments = split_documents(notices)
     assert assignments == split_documents(list(reversed(notices)))[::-1]

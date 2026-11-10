@@ -120,6 +120,9 @@ def test_university_pagination_and_preparation(tmp_path, source):
     assert all(r["reference_date"] is None for r in rows)
     notices = read_jsonl(tmp_path / source / "prepared/notices.jsonl")
     assert len(notices) == 2
+    expected_date = "2026-10-19" if source == "uit-student" else None
+    assert all(n["publication_date_candidate"] == expected_date for n in notices)
+    assert all("publication_date_status" not in n for n in notices)
     assert all("next" not in n["text"] for n in notices)
 
 
@@ -289,6 +292,8 @@ def test_run_preserves_sources_deduplicates_and_prepares_offsets(tmp_path):
         assert source["reference_date"] is None and source["group_id"] == "pilot-template"
         assert notice.domain_holdout and notice.privacy_review_required and not notice.synthetic
         assert notice.reference_date is None and notice.reference_date_origin == "missing"
+        assert notice.publication_date_candidate == row.publication_date_candidate
+        assert "publication_date_status" not in notice.model_dump()
         assert row.warnings == ["short_text"]
         for sentence in notice.sentences:
             assert 0 <= sentence.start < sentence.end <= len(notice.text)
