@@ -44,6 +44,21 @@ uv run smartnotice privacy-review-queue
 
 The URL above illustrates the command syntax. Choose a verified public notice and its actual selector before collection. The collector fetches explicit URLs; it does not discover links.
 
+## Audit model context and prepared text
+
+`audit-lm` loads pinned tokenizer files only and writes private, ignored artifacts under `reports/generated/lm-audit/`. Pass notice JSONL files separately by source; the command creates an audit split for the combined snapshot and leaves existing assignments untouched. Supply the current split as `--reference-splits` when comparing against a partial or earlier split.
+
+```powershell
+uv run --locked --group audit --group notebooks smartnotice audit-lm `
+  --notices data/interim/email_notices.jsonl `
+  --notices data/interim/web_notices.jsonl `
+  --annotations data/annotations/human_annotations.valid.jsonl `
+  --reference-splits data/processed/preprocess_splits.jsonl `
+  --output-dir reports/generated/lm-audit/20261110T120000Z
+```
+
+The default audit measures `text_only_v1` and the proposed `proposed_event_v1` prefix for pinned BamiBERT and ViT5 tokenizers. The proposed prefix is not a training configuration. Tokenizer/config files are cached under ignored `data/interim/lm_audit_snapshot/tokenizer_cache/`; model weights are not downloaded. The output includes token/context tables, URL and evidence coverage, preprocessing findings, a private human-review queue, figures, and a Vietnamese report. Every queue item starts `pending`; automation does not record human decisions. See the [audit data contract](docs/interface.md#measure-model-context-and-review-findings).
+
 Preparation retains redacted URLs in `text` and copies them to `attachments`. To configure identifiers and reviewed public contacts, copy [the empty privacy template](config/privacy_rules.example.json) into private storage and pass it explicitly:
 
 ```powershell
@@ -107,3 +122,5 @@ The installed Python package is `smartnotice`. The package mapping in `pyproject
 - [Writing guide](docs/WRITING_GUIDE.md)
 
 Team names, student IDs, and submission URLs belong in the submission materials. No team identity or public deployment URL is supplied with this workspace.
+
+To extend a recorded context audit with token-label balance and writing-form counts, use `uv run --locked --group audit --group notebooks smartnotice audit-language --base-run reports/generated/lm-audit/<run_id> --notices <email.jsonl> --notices <web.jsonl> --annotations <human_annotations.jsonl> --output-dir reports/generated/lm-audit/<new_run_id>`. Inputs must match the base run hashes. The report distinguishes abbreviation/English dictionary hits and unaccented-text candidates from reviewed language labels; the [data contract](docs/interface.md#audit-token-labels-and-surface-language) defines denominators and pending review records.

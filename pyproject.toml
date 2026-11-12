@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.15"
 dependencies = [
   "beautifulsoup4>=4.13,<5",
   "httpx>=0.28,<1",
+  "label-studio>=1.23.2",
   "pandas>=2.2,<4",
   "pydantic>=2.11,<3",
 ]
@@ -23,6 +24,11 @@ packages = ["smartnotice", "smartnotice.collectors", "smartnotice.parsers", "sma
 package-dir = {smartnotice = "src"}
 
 [dependency-groups]
+audit = [
+    "huggingface-hub>=0.30,<3",
+    "sentencepiece>=0.2,<1",
+    "tokenizers>=0.21,<1",
+]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 notebooks = ["ipykernel>=6,<8", "jupyterlab>=4,<5", "matplotlib>=3.9,<4", "nbclient>=0.10,<1", "nbformat>=5.10,<6"]
 

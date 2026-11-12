@@ -1,9 +1,56 @@
 """Extract ordered web links; adapted from the supplied Data Email/content_processor.py."""
 
 import re
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 WEB_LINK = re.compile(r"(?:https?://|www\.)[^\s<>\"“”‘’`]+", re.I)
+
+
+@dataclass(frozen=True)
+class TextURLOccurrence:
+    """Locate one URL in prepared text using Python string offsets."""
+
+    value: str
+    start: int
+    end: int
+    canonical_key: str
+
+
+def find_link_occurrences(text: str) -> list[TextURLOccurrence]:
+    """Return every valid URL occurrence and its exact prepared-text offsets.
+
+    The matcher applies the same punctuation and closing-delimiter trimming as
+    :func:`extract_links`. Repeated occurrences are preserved. Offsets use
+    Python Unicode code points and never include surrounding markup.
+    """
+    occurrences: list[TextURLOccurrence] = []
+    for match in WEB_LINK.finditer(text):
+        raw = match.group().rstrip(".,;:!?'")
+        while raw and raw[-1] in ")]}":
+            closing = raw[-1]
+            opening = {")": "(", "]": "[", "}": "{"}[closing]
+            if raw.count(closing) <= raw.count(opening):
+                break
+            raw = raw[:-1]
+        emphasis = re.search(r"([*_]+)$", text[: match.start()])
+        if emphasis and raw.endswith(emphasis[1]):
+            raw = raw[: -len(emphasis[1])]
+        if not raw:
+            continue
+        try:
+            parsed = urlsplit("https://" + raw if raw.lower().startswith("www.") else raw)
+            if (
+                not parsed.hostname
+                or re.search(r"[()\[\]{}]", parsed.hostname)
+                or any(char.isspace() for char in raw)
+            ):
+                continue
+        except ValueError:
+            continue
+        key = parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower()).geturl()
+        occurrences.append(TextURLOccurrence(raw, match.start(), match.start() + len(raw), key))
+    return occurrences
 
 
 def extract_links(text: str, *, keep_in_text: bool = False) -> tuple[str, list[str]]:

@@ -10,6 +10,8 @@ SpanLabel = Literal["ACTION", "TIME", "AUDIENCE", "CONDITION", "CHANNEL", "DOCUM
 TimeRole = Literal["START", "DEADLINE", "EVENT_TIME"]
 Applicability = Literal["APPLIES", "NOT_APPLIES", "UNCLEAR"]
 Provider = Literal["gemini", "featherless"]
+AuditSplit = Literal["train", "validation", "test", "domain_test", "excluded", "unassigned"]
+AuditStatus = Literal["measured", "not_evaluable", "pending"]
 
 
 class Record(BaseModel):
@@ -189,3 +191,175 @@ class LabelingFailure(Record):
     model: str
     failed_at: datetime
     reason: str
+
+
+class LMAuditContextRecord(Record):
+    """Record one document's complete tokenizer input and simulated head cut."""
+
+    run_id: str
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_type: Literal["email", "web"]
+    split: AuditSplit
+    synthetic: bool
+    model_key: str
+    model_id: str
+    model_revision: str
+    template_id: str
+    template_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    context_limit: int = Field(gt=0)
+    text_characters: int = Field(ge=0)
+    text_tokens: int = Field(ge=0)
+    input_tokens: int = Field(ge=0)
+    prefix_tokens: int = Field(ge=0)
+    special_tokens: int = Field(ge=0)
+    overflow: bool
+    head_input_tokens: int = Field(ge=0)
+    source_tokens_retained_head: int = Field(ge=0)
+    source_tokens_lost_head: int = Field(ge=0)
+    status: Literal["measured", "tokenizer_error"]
+
+
+class LMAuditURLRecord(Record):
+    """Record context retention for one URL occurrence without storing its value."""
+
+    run_id: str
+    occurrence_id: str = Field(pattern=r"^[a-f0-9]{24}$")
+    document_url_id: str = Field(pattern=r"^[a-f0-9]{24}$")
+    url_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    source_type: Literal["email", "web"]
+    split: AuditSplit
+    synthetic: bool
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    model_key: str
+    model_id: str
+    model_revision: str
+    template_id: str
+    policy: str
+    retention: Literal["retained", "partial", "lost"]
+
+
+class LMAuditEvidenceRecord(Record):
+    """Summarize annotation coverage by model, policy, label, and split."""
+
+    run_id: str
+    model_key: str
+    model_id: str
+    model_revision: str
+    template_id: str
+    policy: str
+    source_type: Literal["email", "web"]
+    split: AuditSplit
+    synthetic: bool
+    annotation_source: str
+    unit: str
+    label: str
+    documents_with_annotations: int = Field(ge=0)
+    units_total: int = Field(ge=0)
+    fully_visible: int = Field(ge=0)
+    partially_visible: int = Field(ge=0)
+    not_visible: int = Field(ge=0)
+    not_co_visible: int = Field(ge=0)
+    status: AuditStatus
+
+
+class PreprocessingAnomaly(Record):
+    """Record a prepared-text finding with safe offsets and no text snippet."""
+
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_type: Literal["email", "web"]
+    split: AuditSplit
+    stage: str
+    rule_id: str
+    severity: Literal["info", "review", "critical"]
+    confidence: Literal["high", "medium", "low"]
+    start: int | None = Field(default=None, ge=0)
+    end: int | None = Field(default=None, gt=0)
+    codepoint: str | None = None
+    unicode_name: str | None = None
+    occurrence_count: int = Field(default=1, ge=1)
+    detail_code: str
+
+
+class AuditReviewFinding(Record):
+    """Point to one finding in a private human-review work item."""
+
+    rule_id: str
+    stage: str
+    start: int | None = Field(default=None, ge=0)
+    end: int | None = Field(default=None, gt=0)
+    severity: Literal["info", "review", "critical"]
+
+
+class LMAuditReviewItem(Record):
+    """Keep a private prepared document and its human review state pending."""
+
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_type: Literal["email", "web"]
+    split: AuditSplit
+    selection_method: Literal["flagged", "random_stratified"]
+    strata: list[str] = Field(default_factory=list)
+    findings: list[AuditReviewFinding] = Field(default_factory=list)
+    text: str
+    status: Literal["pending"] = "pending"
+    decision: Literal["expected", "bug", "uncertain"] | None = None
+    reason: str | None = None
+    reviewer_id: str | None = None
+    reviewed_at: datetime | None = None
+
+
+class LMAuditWindowRecord(Record):
+    """Record window cost and global prepared-text character mapping."""
+
+    run_id: str
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    model_key: str
+    model_id: str
+    model_revision: str
+    template_id: str
+    policy: str
+    window_id: int = Field(ge=0)
+    input_tokens: int = Field(ge=0)
+    body_token_start: int = Field(ge=0)
+    body_token_end: int = Field(ge=0)
+    source_char_ranges: list[tuple[int, int]] = Field(default_factory=list)
+    source_offset_origin: Literal["prepared_text_codepoint"] = "prepared_text_codepoint"
+
+
+class LanguageFinding(Record):
+    """Locate a surface-language candidate without copying corpus text."""
+
+    rule: str
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    lexicon_key: str | None = None
+
+
+class LanguageDocumentStats(Record):
+    """Bind surface counts to one prepared-text hash and inherited split."""
+
+    doc_id: str
+    text_sha256: str
+    source_type: Literal["email", "web"]
+    split: str
+    synthetic: bool
+    counts: dict[str, int]
+
+
+class TokenBalanceRow(Record):
+    """Count exclusive subword classes in the supplied annotated subset."""
+
+    model_key: str
+    source_type: str
+    split: str
+    synthetic: bool
+    documents: int
+    label: str
+    count: int
+    denominator: int
+    share: float
+    annotation_source: str = "human_annotation_valid_unadjudicated"

@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -48,6 +49,66 @@ def main(argv: list[str] | None = None) -> None:
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    language = commands.add_parser("audit-language", help="Audit token labels and writing forms")
+    language.add_argument("--notices", type=Path, action="append", required=True)
+    language.add_argument("--annotations", type=Path, required=True)
+    language.add_argument("--base-run", type=Path, required=True)
+    language.add_argument("--output-dir", type=Path, required=True)
+    language.add_argument(
+        "--cache-dir", type=Path, default=Path("data/interim/lm_audit_snapshot/tokenizer_cache")
+    )
+    lm_audit = commands.add_parser(
+        "audit-lm", help="Run a private tokenizer/context/preprocessing audit"
+    )
+    lm_audit.add_argument(
+        "--notices",
+        type=Path,
+        action="append",
+        required=True,
+        help="Notice JSONL input; repeat for multiple sources",
+    )
+    lm_audit.add_argument("--annotations", type=Path)
+    lm_audit.add_argument(
+        "--reference-splits",
+        type=Path,
+        help="Existing split to compare; audit creates a separate full-snapshot split",
+    )
+    lm_audit.add_argument(
+        "--historical-notices",
+        type=Path,
+        help="Prepared notices from a prior snapshot for exact text/hash reconciliation",
+    )
+    lm_audit.add_argument(
+        "--raw-replay-notices",
+        type=Path,
+        help="Prepared notices from a consented local raw-source replay",
+    )
+    lm_audit.add_argument(
+        "--raw-manifest",
+        type=Path,
+        help="Private raw manifest used to bind replayed bytes to consent/source hashes",
+    )
+    lm_audit.add_argument("--email-prediction-manifest", type=Path)
+    lm_audit.add_argument("--web-preprocess-manifest", type=Path)
+    lm_audit.add_argument("--output-dir", type=Path)
+    lm_audit.add_argument("--run-id")
+    lm_audit.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    lm_audit.add_argument("--similarity", type=float, default=0.9)
+    lm_audit.add_argument(
+        "--cache-dir", type=Path, default=Path("data/interim/lm_audit_snapshot/tokenizer_cache")
+    )
+    lm_audit.add_argument(
+        "--template",
+        action="append",
+        choices=["text_only_v1", "proposed_event_v1"],
+        help="Repeat; default audits both",
+    )
+    lm_audit.add_argument("--bami-model", default="Qualcomm-AI-Research/BamiBERT")
+    lm_audit.add_argument("--bami-revision", default="57bc1340debbe4e348ec549047a763caebe4a977")
+    lm_audit.add_argument("--bami-context", type=int, default=2048)
+    lm_audit.add_argument("--vit5-model", default="VietAI/vit5-base")
+    lm_audit.add_argument("--vit5-revision", default="2209a38d735ede63e88f5aa52bcdc11a05a37b85")
+    lm_audit.add_argument("--vit5-context", type=int, default=1024)
     demo = commands.add_parser("demo", help="Run the offline synthetic example")
     demo.add_argument("--root", type=Path, default=Path.cwd())
     email = commands.add_parser("collect-email", help="Import consented .eml files or a directory")
@@ -201,6 +262,49 @@ def main(argv: list[str] | None = None) -> None:
                 args.inputs, args.output_dir, privacy_rules=args.privacy_rules
             )
             print(json.dumps(report, ensure_ascii=False, indent=2))
+        elif args.command == "audit-language":
+            from smartnotice.language_audit import run_language_audit
+
+            print(
+                json.dumps(
+                    run_language_audit(
+                        args.notices,
+                        args.annotations,
+                        args.base_run,
+                        args.output_dir,
+                        args.cache_dir,
+                    ),
+                    ensure_ascii=False,
+                )
+            )
+        elif args.command == "audit-lm":
+            from smartnotice.lm_audit import run_lm_audit
+
+            run_id = args.run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            output_dir = args.output_dir or Path("reports/generated/lm-audit") / run_id
+            report = run_lm_audit(
+                args.notices,
+                annotations_path=args.annotations,
+                reference_splits_path=args.reference_splits,
+                historical_notices_path=args.historical_notices,
+                raw_replay_notices_path=args.raw_replay_notices,
+                raw_manifest_path=args.raw_manifest,
+                email_manifest_path=args.email_prediction_manifest,
+                web_manifest_path=args.web_preprocess_manifest,
+                output_dir=output_dir,
+                run_id=run_id,
+                seed=args.seed,
+                similarity=args.similarity,
+                cache_dir=args.cache_dir,
+                bami_context=args.bami_context,
+                vit5_context=args.vit5_context,
+                bami_model=args.bami_model,
+                bami_revision=args.bami_revision,
+                vit5_model=args.vit5_model,
+                vit5_revision=args.vit5_revision,
+                template_ids=args.template,
+            )
+            print(json.dumps(report, ensure_ascii=False))
         elif args.command == "suggest-labels":
             errors_output = args.errors_output or args.output.with_suffix(".errors.jsonl")
             if (
