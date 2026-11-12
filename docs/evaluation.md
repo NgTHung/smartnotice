@@ -4,7 +4,9 @@ SmartNotice has an extraction task and an applicability task, so evaluation must
 
 ## Freeze data
 
-Use the reviewed grouped split assignments defined in the [data contract](interface.md). Train and tune on the ordinary train/validation pool, retain the ordinary test set, and reserve the web domain test set. Use GroupKFold within training data and repeat runs across recorded seeds. Keep document groups intact in every fold and inherit assignments for every event/profile pair.
+Use the reviewed grouped split assignments defined in the [data contract](interface.md). The [split procedure](data-splitting.md) explains freezing, extensions and independent gold-test preparation. Train and tune on the ordinary train/validation pool, retain the ordinary test set, and reserve the web domain test set. Use GroupKFold within the development pool of train plus validation, fitting every learned transformation and model only on the training portion of each fold. Repeat runs across recorded seeds. Keep document groups intact in every fold and inherit assignments for every event/profile pair.
+
+Accept duplicate groups and complete independent double annotation and adjudication of the reserved test documents before reporting gold-test metrics. Historical assisted labels remain reference material; they do not establish gold status. Keep held-out predictions and historical labels away from independent annotators. Evaluate each final model on test/domain test after selection, and record any earlier exposure that limits a claim of an untouched test set.
 
 Fit TF-IDF, feature selection, preprocessing statistics, hyperparameters, and calibration using training or validation data only. Exclude synthetic demo notices from research measurements. Record source balance, excluded groups, missing labels, and the actual number of documents/events/pairs in each split.
 

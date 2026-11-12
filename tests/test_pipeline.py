@@ -1,4 +1,5 @@
 import hashlib
+from collections import Counter
 from difflib import SequenceMatcher
 
 import pytest
@@ -70,6 +71,26 @@ def test_small_corpus_does_not_duplicate_documents_to_fill_splits(notices):
         split_documents([notices[0], notices[0]])
     with pytest.raises(ValueError, match="Similarity"):
         split_documents(notices, similarity=0)
+
+
+def test_ordinary_split_targets_65_15_20(notices):
+    independent = [
+        notices[0].model_copy(
+            update={
+                "doc_id": f"synthetic-{i}",
+                "group_id": f"group-{i}",
+                "text": f"Synthetic notice {i}.",
+                "sentences": [],
+                "domain_holdout": False,
+            }
+        )
+        for i in range(20)
+    ]
+    assert Counter(row["split"] for row in split_documents(independent, similarity=1.0)) == {
+        "train": 13,
+        "validation": 3,
+        "test": 4,
+    }
 
 
 def test_quality_rejects_duplicate_assignments(notices):

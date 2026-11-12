@@ -44,6 +44,14 @@ uv run smartnotice privacy-review-queue
 
 The URL above illustrates the command syntax. Choose a verified public notice and its actual selector before collection. The collector fetches explicit URLs; it does not discover links.
 
+For a reviewed curated snapshot, freeze grouped 65/15/20 assignments and reserve a separate web holdout:
+
+```powershell
+uv run python tools/freeze_curated_split.py --input path/to/reviewed-snapshot --output data/processed/frozen-v1
+```
+
+Use `--previous data/processed/frozen-v1` with a cumulative reviewed snapshot and a new output directory when adding documents. Follow the [split procedure](docs/data-splitting.md) for input review, stratification, gold-test preparation and extensions.
+
 Preparation retains redacted URLs in `text` and copies them to `attachments`. To configure identifiers and reviewed public contacts, copy [the empty privacy template](config/privacy_rules.example.json) into private storage and pass it explicitly:
 
 ```powershell

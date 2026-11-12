@@ -57,7 +57,7 @@ def group_documents(notices: list[Notice], similarity: float = 0.9) -> dict[str,
 def split_documents(
     notices: list[Notice], seed: int = DEFAULT_SEED, similarity: float = 0.9
 ) -> list[dict]:
-    """Assign whole groups near 70/15/15 and isolate reserved web groups.
+    """Assign whole groups near 65/15/20 and isolate reserved web groups.
 
     A group touching the domain holdout is reserved in full. Related email
     records receive `excluded` so the holdout remains web-only. Tiny corpora
@@ -76,7 +76,7 @@ def split_documents(
     rng.shuffle(pool)
     pool.sort(key=lambda key: len(groups[key]), reverse=True)
     total = sum(len(groups[key]) for key in pool)
-    targets = {"train": 0.7 * total, "validation": 0.15 * total, "test": 0.15 * total}
+    targets = {"train": 0.65 * total, "validation": 0.15 * total, "test": 0.20 * total}
     counts = dict.fromkeys(targets, 0)
     assignments = {}
     for key in pool:
