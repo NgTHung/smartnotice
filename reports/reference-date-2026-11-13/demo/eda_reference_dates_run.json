@@ -1,0 +1,16 @@
+{
+  "dataset": "demo",
+  "notice_path": "data/interim/demo/notices.jsonl",
+  "notice_sha256": "a3fb6e719e87eca6f5bd28da3b147a919de1414dad4360fa1721b5e507466f9c",
+  "documents": 9,
+  "synthetic_documents": 9,
+  "dated_documents": 9,
+  "missing_documents": 0,
+  "first_month": "2026-10",
+  "last_month": "2026-10",
+  "bin": "calendar month",
+  "source_field": "source_type",
+  "python": "3.12.13",
+  "pandas": "3.0.6",
+  "matplotlib": "3.11.2"
+}

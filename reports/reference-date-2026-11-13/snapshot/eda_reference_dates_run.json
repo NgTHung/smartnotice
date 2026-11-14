@@ -1,0 +1,16 @@
+{
+  "dataset": "snapshot",
+  "notice_path": "data/catalogs/hcmus-focused-100/notices.jsonl",
+  "notice_sha256": "e85cfdd9df6aab5881dfdfa0d178de62b50640b0376304dff32cd7778813cf5e",
+  "documents": 100,
+  "synthetic_documents": 0,
+  "dated_documents": 0,
+  "missing_documents": 100,
+  "first_month": null,
+  "last_month": null,
+  "bin": "calendar month",
+  "source_field": "source_type",
+  "python": "3.12.13",
+  "pandas": "3.0.6",
+  "matplotlib": "3.11.2"
+}

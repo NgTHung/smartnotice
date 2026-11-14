@@ -2,7 +2,46 @@
 
 from collections import Counter
 
+import pandas as pd
 from smartnotice.schemas import Notice
+
+
+def reference_date_counts(notices: list[Notice]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Count documents by calendar month and source, plus date coverage by source.
+
+    Return integer monthly counts on a chronological monthly PeriodIndex and
+    coverage columns ``total``, ``dated``, ``missing``. Include zero months between
+    the earliest and latest reference dates and all observed source types. Null
+    dates contribute only to coverage; publication candidates are never used.
+    Empty input or entirely missing dates produce an empty monthly table.
+    """
+    sources = sorted({notice.source_type for notice in notices})
+    total = Counter(notice.source_type for notice in notices)
+    dated = Counter(notice.source_type for notice in notices if notice.reference_date is not None)
+    coverage = pd.DataFrame(
+        [[total[source], dated[source], total[source] - dated[source]] for source in sources],
+        index=pd.Index(sources, name="source_type"),
+        columns=["total", "dated", "missing"],
+        dtype="int64",
+    )
+    counts = Counter(
+        (pd.Period(notice.reference_date, freq="M"), notice.source_type)
+        for notice in notices
+        if notice.reference_date is not None
+    )
+    months = [month for month, _ in counts]
+    index = (
+        pd.period_range(min(months), max(months), freq="M", name="month")
+        if months
+        else pd.PeriodIndex([], freq="M", name="month")
+    )
+    monthly = pd.DataFrame(
+        [[counts[month, source] for source in sources] for month in index],
+        index=index,
+        columns=pd.Index(sources, name="source_type"),
+        dtype="int64",
+    )
+    return monthly, coverage
 
 
 def quality_summary(notices: list[Notice], splits: list[dict]) -> dict:
