@@ -14,6 +14,7 @@ from smartnotice.labeling.automatic_grouping import (
     propose_event_groups,
 )
 from smartnotice.labeling.event_groups import build_event_groups
+from smartnotice.labeling.studio import export_prediction_task, import_prediction_tasks
 from smartnotice.schemas import (
     Annotation,
     Argument,
@@ -388,6 +389,121 @@ def test_cli_exports_reproducible_page_and_keeps_reference_out_of_predictions(tm
         repeated = subprocess.run(args, cwd=root, capture_output=True, text=True)
         assert repeated.returncode != 0 and "already exists" in repeated.stderr
         assert (output / "index.html").read_bytes() == before
+
+
+@pytest.fixture
+def saved_predictions(tmp_path):
+    (Path(__file__).resolve().parents[1] / "reports/generated").mkdir(parents=True, exist_ok=True)
+    items = [item("a"), item("b"), item("empty")]
+    items[-1][1].events = []
+    items[-1][1].spans = []
+    tasks = []
+    for notice, annotation in items:
+        annotation.annotator_id = "model_prediction"
+        tasks.append(
+            export_prediction_task(notice, annotation, provider="featherless", model="synthetic")
+        )
+    notices = tmp_path / "notices.jsonl"
+    predictions = tmp_path / "predictions.json"
+    notices.write_text("\n".join(n.model_dump_json() for n, _ in items), encoding="utf-8")
+    predictions.write_text(json.dumps(tasks, ensure_ascii=False), encoding="utf-8")
+    return notices, predictions, [n for n, _ in items]
+
+
+def test_cli_groups_saved_predictions_and_retains_empty_documents_and_model_authorship(
+    saved_predictions,
+):
+    notices_path, predictions_path, notices = saved_predictions
+    before = [p.read_bytes() for p in (notices_path, predictions_path)]
+    annotations = import_prediction_tasks(json.loads(before[1]), notices)
+    expected = propose_event_groups(notices, annotations, generated_at=STAMP)
+    root = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory(
+        prefix="test-predictions-", dir=root / "reports/generated"
+    ) as d:
+        output = Path(d) / "result"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "tools/run_automatic_grouping.py",
+                "--notices",
+                str(notices_path),
+                "--predictions",
+                str(predictions_path),
+                "--output-dir",
+                str(output),
+                "--generated-at",
+                STAMP.isoformat(),
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+        saved = json.loads((output / "result.json").read_text(encoding="utf-8"))
+        assert saved == expected.model_dump(mode="json")
+        snapshot = [
+            Annotation.model_validate_json(line)
+            for line in (output / "annotations.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert snapshot == annotations
+        assert len(snapshot) == 3 and snapshot[-1].events == []
+        assert all(a.annotator_id == "model_prediction" for a in snapshot)
+        run_metadata = json.loads((output / "run.json").read_text(encoding="utf-8"))
+        assert run_metadata["label_origin"] == "rule_proposals_over_model_predictions"
+        assert run_metadata["workflow_counts"]["empty_annotation_documents"] == 1
+        assert not run_metadata["human_approval_created"]
+        assert not run_metadata["privacy_approval_created"]
+        assert all(
+            g["review_required"] and g["privacy_review_required"]
+            for g in saved["assembly"]["groups"]
+        )
+        assert [p.read_bytes() for p in (notices_path, predictions_path)] == before
+
+
+@pytest.mark.parametrize("defect", ["missing", "duplicate", "stale", "completion", "malformed"])
+def test_cli_rejects_incomplete_or_invalid_prediction_batches_before_writing(
+    saved_predictions, defect
+):
+    notices, predictions, _ = saved_predictions
+    tasks = json.loads(predictions.read_text(encoding="utf-8"))
+    if defect == "missing":
+        tasks.pop()
+    elif defect == "duplicate":
+        tasks.append(tasks[0])
+    elif defect == "stale":
+        tasks[0]["data"]["proposal"]["text_sha256"] = "0" * 64
+    elif defect == "completion":
+        tasks[0]["annotations"] = [{"completed_by": "synthetic-reviewer", "result": []}]
+    predictions.write_text("{" if defect == "malformed" else json.dumps(tasks), encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory(
+        prefix="test-invalid-predictions-", dir=root / "reports/generated"
+    ) as d:
+        output = Path(d) / "result"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "tools/run_automatic_grouping.py",
+                "--notices",
+                str(notices),
+                "--predictions",
+                str(predictions),
+                "--output-dir",
+                str(output),
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode != 0
+        expected_error = (
+            "Saved predictions must cover exactly"
+            if defect == "missing"
+            else "Invalid saved predictions"
+        )
+        assert expected_error in completed.stderr
+        assert not output.exists()
 
 
 def test_conditional_extra_task_keeps_its_annotated_condition():

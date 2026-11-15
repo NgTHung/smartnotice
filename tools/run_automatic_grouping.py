@@ -14,6 +14,7 @@ from smartnotice.labeling.automatic_grouping import (
     propose_event_groups,
 )
 from smartnotice.labeling.group_viewer import render_group_review
+from smartnotice.labeling.studio import import_prediction_tasks
 from smartnotice.schemas import (
     Annotation,
     AutomaticGroupingConfig,
@@ -44,13 +45,17 @@ def _dump(path: Path, value: object) -> None:
 def main() -> None:
     """Validate all outputs before writing to a new private directory.
 
+    Accept canonical annotations or a complete batch of saved model predictions.
+    Preserve model authorship and retain empty annotations in the output snapshot.
     A reference assembly is read only for diagnostics after proposals are built.
     No approval is inherited by new groups, even when membership matches. Source
     text, saved reviews, previous HTML and evaluation splits remain unchanged.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--notices", type=Path, required=True)
-    parser.add_argument("--annotations", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--annotations", type=Path)
+    source.add_argument("--predictions", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--time-boundaries", type=Path)
     parser.add_argument("--reference-assembly", type=Path)
@@ -64,13 +69,14 @@ def main() -> None:
     if output.exists():
         raise ValueError("Output already exists; choose a new directory")
     template = Path(__file__).parent / "templates/group_review.html.template"
-    inputs = [args.notices, args.annotations]
+    inputs = [args.notices, args.annotations or args.predictions]
     inputs += [p for p in [args.time_boundaries, args.reference_assembly] if p]
     code = [
         Path(__file__),
         Path("src/labeling/automatic_grouping.py"),
         Path("src/labeling/event_groups.py"),
         Path("src/labeling/group_viewer.py"),
+        Path("src/labeling/studio.py"),
         Path("src/labeling/validation.py"),
         Path("src/labeling/llm.py"),
         Path("src/schemas.py"),
@@ -79,7 +85,18 @@ def main() -> None:
     ]
     before = {p.as_posix(): _sha(p) for p in inputs + code}
     notices = _read(args.notices, Notice)
-    annotations = _read(args.annotations, Annotation)
+    if args.predictions:
+        try:
+            tasks = json.loads(args.predictions.read_text(encoding="utf-8-sig"))
+            annotations = import_prediction_tasks(tasks, notices)
+        except (ValueError, KeyError, TypeError):
+            raise ValueError(
+                "Invalid saved predictions; check structure, source hashes and spans privately"
+            ) from None
+        if {a.doc_id for a in annotations} != {n.doc_id for n in notices}:
+            raise ValueError("Saved predictions must cover exactly the supplied Notice documents")
+    else:
+        annotations = _read(args.annotations, Annotation)
     result = propose_event_groups(
         notices,
         annotations,
@@ -100,6 +117,8 @@ def main() -> None:
         raise ValueError("Input or implementation changed during the run")
     counts = {
         "documents": len(notices),
+        "annotation_documents": len(annotations),
+        "empty_annotation_documents": sum(not a.events for a in annotations),
         "mentions": len(result.assembly.mentions),
         "compared_pairs": result.compared_pairs,
         "candidate_pairs": len(result.proposals),
@@ -127,7 +146,9 @@ def main() -> None:
         "environment": {"python": platform.python_version(), "system": platform.system()},
         "workflow_counts": counts,
         "development_diagnostics": diagnostics,
-        "label_origin": "rule_proposals_over_supplied_annotations",
+        "label_origin": "rule_proposals_over_model_predictions"
+        if args.predictions
+        else "rule_proposals_over_supplied_annotations",
         "randomness": None,
         "quality_measured": False,
         "human_approval_created": False,
@@ -136,6 +157,7 @@ def main() -> None:
         "reference_used_for_prediction": False,
     }
     output.mkdir(parents=True)
+    write_jsonl(output / "annotations.jsonl", [a.model_dump(mode="json") for a in annotations])
     _dump(output / "result.json", result.model_dump(mode="json"))
     _dump(output / "assembly.json", result.assembly.model_dump(mode="json"))
     write_jsonl(

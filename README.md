@@ -120,6 +120,17 @@ uv run python tools/run_automatic_grouping.py `
 
 Open `index.html` and `comparison.md` in the new directory. Omit `--reference-assembly` for new data without a comparison snapshot, and `--time-boundaries` when no attributed time interpretations exist. The [automatic grouping procedure](docs/event-grouping.md#chạy-đề-xuất-gom-nhóm-tự-động) defines candidate evidence, abstentions and development diagnostics. This command uses local rules and saved annotations; it does not call a model provider or collect email.
 
+For a complete saved prediction batch, use `--predictions`.
+
+```powershell
+uv run python tools/run_automatic_grouping.py `
+  --notices data/annotations/drive-auto-label-2026-11-04/notices.compat.jsonl `
+  --predictions data/annotations/drive-auto-label-2026-11-04/tasks.json `
+  --output-dir reports/generated/automatic-grouping-batch-local
+```
+
+Each Notice needs one valid saved prediction, including documents with empty results. The command checks source and prediction hashes and writes `annotations.jsonl` with model authorship for reproducing the assembly and applying later review. Empty annotations remain available for reviewing extraction omissions. Choose either `--annotations` or `--predictions` for each run.
+
 To apply an exported review and an explicit [resolution plan](docs/interface.md#apply-local-group-review-notes) to the viewed snapshot:
 
 ```powershell
