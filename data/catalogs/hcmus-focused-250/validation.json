@@ -1,0 +1,46 @@
+{
+  "validated_documents": 250,
+  "institutions": {
+    "HCMUS": 190,
+    "UIT": 30,
+    "UEH": 30
+  },
+  "unique_prepared_texts": 250,
+  "schemas_valid": true,
+  "source_hash_links_valid": true,
+  "sentence_offsets_valid": true,
+  "text_version": "team-contact-redacted-v1",
+  "additional_redactions": 177,
+  "human_privacy_review_complete": false,
+  "human_date_review_complete": false,
+  "annotations_complete": false,
+  "baseline_documents_preserved": 100,
+  "new_documents": 150,
+  "new_institutions": {
+    "HCMUS": 150
+  },
+  "date_candidates": 250,
+  "date_status_counts": {
+    "unverified": 250
+  },
+  "publication_date_range": [
+    "2021-03-12",
+    "2026-11-05"
+  ],
+  "new_publication_date_range": [
+    "2024-07-02",
+    "2026-02-11"
+  ],
+  "new_text_characters": {
+    "min": 157,
+    "median": 2119.5,
+    "max": 9216
+  },
+  "new_source_warning_counts": {
+    "attachment_context_review": 32,
+    "merged_table_cells": 2
+  },
+  "new_raw_candidates_validated": 177,
+  "review_exclusions": 23,
+  "source_catalog_sha256": "a26cb2595846860a53b3887448244c6aee8ee8b78a3cc382abad8517363b25c6"
+}

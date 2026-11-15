@@ -9,6 +9,7 @@ import pytest
 from smartnotice import cli
 from smartnotice.collectors import crawl, web
 from smartnotice.collectors.crawl import crawl_web, validate_run_id
+from smartnotice.collectors.dataset import export_team_snapshot
 from smartnotice.collectors.hcmus import (
     LIST_URL,
     NoticeRejected,
@@ -19,7 +20,7 @@ from smartnotice.collectors.hcmus import (
 from smartnotice.collectors.sources import SOURCES, next_listing
 from smartnotice.collectors.web import CollectionPolicyError, WebCollector
 from smartnotice.io import read_jsonl
-from smartnotice.schemas import CrawlIndex, CrawlLog, CrawlSummary, Notice
+from smartnotice.schemas import CrawlIndex, CrawlLog, CrawlSummary, Notice, NoticeCatalogEntry
 
 
 def listing(*paths):
@@ -302,6 +303,56 @@ def test_run_preserves_sources_deduplicates_and_prepares_offsets(tmp_path):
     duplicate = next(row for row in log if row.reason == "duplicate_text")
     assert duplicate.duplicate_of == index[0].doc_id
     assert (run / duplicate.snapshot_path).exists()
+
+
+def test_crawl_excludes_previous_urls_and_text(tmp_path):
+    requests = []
+    origin = "https://hcmus.edu.vn"
+    first = tmp_path / "first"
+    with client_for({LIST_URL: listing("/old"), f"{origin}/old": detail()}, requests) as client:
+        crawl_web(WebCollector(client), first, limit=1)
+    previous = read_jsonl(first / "index.jsonl")[0]
+    keys = NoticeCatalogEntry.model_fields.keys() - {"source"}
+    catalog = NoticeCatalogEntry.model_validate(
+        {"source": "hcmus-student", **{key: previous[key] for key in keys}}
+    )
+    requests.clear()
+    pages = {
+        LIST_URL: listing("/old", "/copy", "/new"),
+        f"{origin}/copy": detail(metadata="2026-10-27T02:00:00+07:00"),
+        f"{origin}/new": detail(body="Sinh viên nộp hồ sơ tốt nghiệp trước 31/10."),
+    }
+    with client_for(pages, requests) as client:
+        summary = crawl_web(
+            WebCollector(client), tmp_path / "second", limit=1, exclude_notices=[catalog]
+        )
+    assert f"{origin}/old" not in requests
+    assert summary.complete
+    assert summary.outcome_counts == {"duplicate_text": 1, "accepted": 1}
+    duplicate = read_jsonl(tmp_path / "second/crawl_log.jsonl")[1]
+    assert duplicate["duplicate_of"] == catalog.doc_id
+
+
+def test_snapshot_export_only_writes_selected_documents(tmp_path):
+    origin = "https://hcmus.edu.vn"
+    pages = {
+        LIST_URL: listing("/one", "/two"),
+        f"{origin}/one": detail(),
+        f"{origin}/two": detail(body="Sinh viên nộp hồ sơ tốt nghiệp trước 31/10."),
+    }
+    run = tmp_path / "pilot"
+    with client_for(pages, []) as client:
+        crawl_web(WebCollector(client), run, limit=2)
+
+    selected = read_jsonl(run / "index.jsonl")[1]["doc_id"]
+    destination = tmp_path / "snapshot"
+    summary = export_team_snapshot(
+        run, destination, expected_counts={"HCMUS": 2}, document_ids={selected}
+    )
+    assert summary["documents"] == 1
+    assert summary["institutions"] == {"HCMUS": 1}
+    for name in ("notices.jsonl", "snapshot_index.jsonl"):
+        assert [row["doc_id"] for row in read_jsonl(destination / name)] == [selected]
 
 
 def test_partial_run_retains_rejected_snapshot_and_empty_prepared_file(tmp_path):

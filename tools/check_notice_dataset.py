@@ -1,4 +1,4 @@
-"""Validate a 40/30/30 local crawl or its shared prepared snapshot."""
+"""Validate the original local crawl or a shared team snapshot."""
 
 import argparse
 import json
@@ -14,12 +14,18 @@ def main() -> int:
     inputs.add_argument("--run-dir", type=Path)
     inputs.add_argument("--snapshot-dir", type=Path)
     parser.add_argument("--catalog-dir", type=Path)
+    parser.add_argument("--expected-documents", type=int)
     args = parser.parse_args()
     if args.snapshot_dir:
         if args.catalog_dir:
             parser.error("--catalog-dir requires --run-dir")
-        print(json.dumps(validate_team_snapshot(args.snapshot_dir), ensure_ascii=False, indent=2))
+        report = validate_team_snapshot(
+            args.snapshot_dir, expected_documents=args.expected_documents
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
+    if args.expected_documents is not None:
+        parser.error("--expected-documents requires --snapshot-dir")
     counts = {"HCMUS": 40, "UIT": 30, "UEH": 30}
     report = (
         export_catalog(args.run_dir, args.catalog_dir, counts)

@@ -58,15 +58,19 @@ The default allocation is fixed at 40/30/30. `--limits` can set another allocati
 
 The combined `index.jsonl`, `prepared/notices.jsonl`, and `summary.json` live in the run folder. Each source subfolder preserves its own manifest, snapshots, and logs. Cross-source identical prepared texts count once; an insufficient unique total remains incomplete. For one source, `crawl-web --source uit-student` or `--source ueh-student` accepts `--max-pages 30` to follow multiple listings.
 
-The checked dataset, including all 100 prepared notice texts, is [data/catalogs/hcmus-focused-100](data/catalogs/hcmus-focused-100/README.md). Use `data/catalogs/hcmus-focused-100/notices.jsonl` directly after cloning. Optionally rebuild the original source texts locally, or validate a newly collected batch:
+The [250-notice dataset](data/catalogs/hcmus-focused-250/README.md) includes 190 HCMUS, 30 UIT and 30 UEH notices. Use `data/catalogs/hcmus-focused-250/notices.jsonl` directly after cloning. The [original 100-notice pilot](data/catalogs/hcmus-focused-100/README.md) remains available for existing annotation work.
+
+Validate the shared dataset, rebuild its original source texts locally, or validate the original pilot with saved HTML:
 
 ```powershell
-uv run python tools/check_notice_dataset.py --snapshot-dir data/catalogs/hcmus-focused-100
-uv run python tools/fetch_notice_catalog.py --catalog data/catalogs/hcmus-focused-100/sources.jsonl --run-id team-copy-001
+uv run python tools/check_notice_dataset.py --snapshot-dir data/catalogs/hcmus-focused-250 --expected-documents 250
+uv run python tools/fetch_notice_catalog.py --catalog data/catalogs/hcmus-focused-250/sources.jsonl --run-id team-copy-250
 uv run python tools/check_notice_dataset.py --run-dir data/raw/crawls/hcmus-focused-100-001
 ```
 
 The shared snapshot contains additional contact masking and regenerated sentence offsets; use its text version for team annotation. Original HTML and private crawl logs stay local. The dataset README explains original/shared text hashes, pending human review and the project's larger targets.
+
+Use `--exclude-catalog` to extend a collection while skipping existing article URLs and duplicate prepared text.
 
 Choose a new `--run-id` for every run. Outputs live under `data/raw/crawls/<run-id>/`: inspect `summary.json`, `index.jsonl`, `crawl_log.jsonl`, and `prepared/notices.jsonl`. Exit codes are 0 for the collection target reached, 2 for too few usable candidates, 1 for failure, and 130 for interruption. Invalid CLI syntax also exits 2 before a run starts. Completion does not certify human review. The [collection protocol](docs/collection.md) explains source selection, pending dates, recovery, and privacy review; the [crawler reference](docs/crawler.md) explains implementation and limitations.
 

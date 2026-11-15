@@ -17,7 +17,7 @@ from smartnotice.labeling.validation import validate_annotation
 from smartnotice.preprocessing.pipeline import prepare
 from smartnotice.preprocessing.split import DEFAULT_SEED, split_documents
 from smartnotice.quality import quality_summary
-from smartnotice.schemas import Annotation, Notice, Profile
+from smartnotice.schemas import Annotation, Notice, NoticeCatalogEntry, Profile
 
 
 def _load(path: Path, schema):
@@ -65,6 +65,9 @@ def main(argv: list[str] | None = None) -> None:
     crawl.add_argument("--interval", type=float, default=2.0, help="Seconds between requests, >=1")
     crawl.add_argument("--domain-holdout", action="store_true")
     crawl.add_argument("--group-id")
+    crawl.add_argument(
+        "--exclude-catalog", type=Path, help="Skip URLs and text already in this source catalog"
+    )
     prep = commands.add_parser("prepare", help="Parse, redact, and segment a manifest")
     prep.add_argument("--manifest", type=Path, default=Path("data/raw/manifest.jsonl"))
     prep.add_argument("--output", type=Path, default=Path("data/interim/notices.jsonl"))
@@ -128,6 +131,9 @@ def main(argv: list[str] | None = None) -> None:
             print(row["path"])
         elif args.command == "crawl-web":
             run_id = validate_run_id(args.run_id)
+            excluded = (
+                _load(args.exclude_catalog, NoticeCatalogEntry) if args.exclude_catalog else ()
+            )
             with httpx.Client(timeout=30) as client:
                 result = crawl_web(
                     WebCollector(client, args.interval),
@@ -137,6 +143,7 @@ def main(argv: list[str] | None = None) -> None:
                     limit=args.limit,
                     max_candidates=args.max_candidates,
                     min_chars=args.min_chars,
+                    exclude_notices=excluded,
                     domain_holdout=args.domain_holdout,
                     group_id=args.group_id,
                 )

@@ -21,7 +21,14 @@ from smartnotice.collectors.web import UnsupportedContentError, WebCollector
 from smartnotice.io import write_jsonl
 from smartnotice.preprocessing.pipeline import prepare
 from smartnotice.preprocessing.text import normalize_and_redact
-from smartnotice.schemas import CrawlCandidate, CrawlIndex, CrawlLog, CrawlSummary, Record
+from smartnotice.schemas import (
+    CrawlCandidate,
+    CrawlIndex,
+    CrawlLog,
+    CrawlSummary,
+    NoticeCatalogEntry,
+    Record,
+)
 
 
 def validate_run_id(run_id: str) -> str:
@@ -81,11 +88,13 @@ def crawl_web(
     min_chars: int = 100,
     domain_holdout: bool = False,
     group_id: str | None = None,
+    exclude_notices: Sequence[NoticeCatalogEntry] = (),
 ) -> CrawlSummary:
     """Collect unique academic HTML notices into a new, private run directory.
 
     Try at most max_candidates eligible links across max_pages listing pages.
     source selects a configured university adapter; discovery preserves DOM order.
+    exclude_notices skips known URLs and rejects matching prepared text across runs.
     min_chars only flags short text. Dates remain unverified candidates in the
     index and null in the raw manifest. Return complete/partial after preparing
     accepted sources; raise on policy, network, storage or unexpected failures.
@@ -115,7 +124,8 @@ def crawl_web(
         domain_holdout=domain_holdout,
     )
     kind, active_url, final_url, snapshot = "listing", listing_url, None, None
-    text_hashes: dict[str, str] = {}
+    known_urls = {notice.url for notice in exclude_notices}
+    text_hashes = {notice.prepared_text_sha256: notice.doc_id for notice in exclude_notices}
     try:
         _atomic_text(run_dir / "raw/manifest.jsonl", "")
         _checkpoint(run_dir, summary, index, log)
@@ -158,7 +168,11 @@ def crawl_web(
                     break
                 # Resolve paging before yielding: detail fetches update the outer URL state.
                 following = next_listing(raw, final_url, adapter, page)
-                yield from (row for row in fresh if row.selection_reason == "eligible")
+                yield from (
+                    row
+                    for row in fresh
+                    if row.selection_reason == "eligible" and row.url not in known_urls
+                )
                 page_url = following
 
         for candidate in islice(eligible_candidates(), max_candidates):
@@ -192,6 +206,19 @@ def crawl_web(
                 _checkpoint(run_dir, summary, index, log)
                 continue
             snapshot = _snapshot(run_dir, raw)
+            if final_url in known_urls:
+                log.append(
+                    CrawlLog(
+                        kind="detail",
+                        requested_url=active_url,
+                        url=final_url,
+                        status="skipped",
+                        reason="excluded_url",
+                        snapshot_path=snapshot,
+                    )
+                )
+                _checkpoint(run_dir, summary, index, log)
+                continue
             try:
                 detail = parse_detail(
                     raw,

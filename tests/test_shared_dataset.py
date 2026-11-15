@@ -30,6 +30,25 @@ def test_shipped_snapshot_validates_without_raw_or_network(snapshot):
     assert not (snapshot / "raw").exists()
 
 
+def test_snapshot_accepts_a_different_release_size_and_can_pin_the_total(snapshot):
+    index = read_jsonl(snapshot / "snapshot_index.jsonl")[:1]
+    row = index[0]
+    summary_path = snapshot / "snapshot_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary.update(
+        documents=1,
+        institutions={row["institution"]: 1},
+        additional_redactions=row["additional_redactions"],
+    )
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    for name in ("notices.jsonl", "snapshot_index.jsonl", "sources.jsonl"):
+        path = snapshot / name
+        write_jsonl(path, [r for r in read_jsonl(path) if r["doc_id"] == row["doc_id"]])
+    assert validate_team_snapshot(snapshot, expected_documents=1)["validated_documents"] == 1
+    with pytest.raises(ValueError, match="summary counts"):
+        validate_team_snapshot(snapshot, expected_documents=100)
+
+
 def test_shared_notices_include_unverified_publication_dates(snapshot):
     index = {row["doc_id"]: row for row in read_jsonl(snapshot / "snapshot_index.jsonl")}
     for notice in read_jsonl(snapshot / "notices.jsonl"):

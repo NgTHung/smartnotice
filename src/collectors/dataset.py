@@ -22,6 +22,7 @@ from smartnotice.schemas import (
     TeamSnapshotSummary,
 )
 
+PILOT_COUNTS = {"HCMUS": 40, "UIT": 30, "UEH": 30}
 SOURCE_IDS = {"HCMUS": "hcmus-student", "UIT": "uit-student", "UEH": "ueh-student"}
 
 _SHARE_PHONE = re.compile(r"(?<!\w)\(?(?:\+84|0)(?:[ .()-]*\d){8,10}\)?(?![ .()-]*\d)")
@@ -255,15 +256,26 @@ def export_catalog(root: Path, destination: Path, expected_counts: dict[str, int
     return report
 
 
-def export_team_snapshot(root: Path, destination: Path) -> dict:
-    """Publish 100 prepared notices with extra contact masking and rebuilt offsets.
+def export_team_snapshot(
+    root: Path,
+    destination: Path,
+    *,
+    expected_counts: dict[str, int] | None = None,
+    document_ids: set[str] | None = None,
+) -> dict:
+    """Export prepared notices with extra contact masking and rebuilt offsets.
 
-    Preserve source IDs and original hashes; record separate shared-text hashes.
-    Keep human review pending. Validate all input before writing any shared text.
+    Validate the input crawl before exporting the selected document_ids, or all
+    documents when omitted. Preserve source IDs, record new shared-text hashes,
+    and leave human review pending. Reject empty or unknown selections.
     """
-    counts = {"HCMUS": 40, "UIT": 30, "UEH": 30}
+    counts = PILOT_COUNTS if expected_counts is None else expected_counts
     validate_corpus(root, counts)
     index = read_jsonl(root / "index.jsonl")
+    if document_ids is not None:
+        index = [row for row in index if row["doc_id"] in document_ids]
+        if not index or len(index) != len(document_ids):
+            raise ValueError("Snapshot selection is empty or contains unknown document IDs")
     original = {
         r["doc_id"]: Notice.model_validate(r) for r in read_jsonl(root / "prepared/notices.jsonl")
     }
@@ -299,11 +311,11 @@ def export_team_snapshot(root: Path, destination: Path) -> dict:
             }
         )
         total_redactions += added
-    if len({r["prepared_text_sha256"] for r in released_index}) != 100:
+    if len({r["prepared_text_sha256"] for r in released_index}) != len(released):
         raise ValueError("Contact redaction created duplicate shared texts")
     summary = {
-        "documents": 100,
-        "institutions": counts,
+        "documents": len(released),
+        "institutions": dict(Counter(row["institution"] for row in index)),
         "additional_redactions": total_redactions,
         "human_privacy_review_complete": False,
         "human_date_review_complete": False,
@@ -323,11 +335,11 @@ def export_team_snapshot(root: Path, destination: Path) -> dict:
     return summary
 
 
-def validate_team_snapshot(directory: Path) -> dict:
+def validate_team_snapshot(directory: Path, *, expected_documents: int | None = None) -> dict:
     """Validate shared files alone, without raw HTML, network, or file mutations.
 
-    Check strict schemas, source identity/hash links, quotas, dates, segmentation,
-    masking, uniqueness and summary counts. No human approval is inferred.
+    Check schemas, provenance, text, and source counts against the summary.
+    expected_documents optionally pins the total for a particular release.
     """
     notices = [Notice.model_validate(r) for r in read_jsonl(directory / "notices.jsonl")]
     index = [
@@ -340,18 +352,26 @@ def validate_team_snapshot(directory: Path) -> dict:
         (directory / "snapshot_summary.json").read_text(encoding="utf-8")
     )
     ids = [n.doc_id for n in notices]
+    ids_set = set(ids)
+    total = summary.documents
     if (
-        len(ids) != 100
-        or len(set(ids)) != 100
-        or len(index) != 100
-        or len(catalog) != 100
-        or set(ids) != {r.doc_id for r in index}
-        or set(ids) != {r.doc_id for r in catalog}
+        len(ids) != total
+        or len(ids_set) != total
+        or len(index) != total
+        or len(catalog) != total
+        or ids_set != {r.doc_id for r in index}
+        or ids_set != {r.doc_id for r in catalog}
     ):
         raise ValueError("Shared files have duplicate, missing or inconsistent identities")
-    expected = {"HCMUS": 40, "UIT": 30, "UEH": 30}
+    if (
+        len({r.url for r in catalog}) != total
+        or len({r.prepared_text_sha256 for r in catalog}) != total
+    ):
+        raise ValueError("Source catalog repeats URLs or prepared text")
     counts = dict(Counter(r.institution for r in index))
-    if counts != expected or summary.institutions != expected or summary.documents != 100:
+    if counts != summary.institutions or (
+        expected_documents is not None and expected_documents != total
+    ):
         raise ValueError("Shared source quotas or summary counts differ")
     by_id = {n.doc_id: n for n in notices}
     by_source = {r.doc_id: r for r in catalog}
@@ -402,7 +422,7 @@ def validate_team_snapshot(directory: Path) -> dict:
     if summary.additional_redactions != sum(r.additional_redactions for r in index):
         raise ValueError("Shared additional-redaction summary differs from index")
     return {
-        "validated_documents": 100,
+        "validated_documents": total,
         "institutions": counts,
         "unique_prepared_texts": len(hashes),
         "schemas_valid": True,

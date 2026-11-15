@@ -1,0 +1,14 @@
+{
+  "documents": 250,
+  "institutions": {
+    "HCMUS": 190,
+    "UIT": 30,
+    "UEH": 30
+  },
+  "additional_redactions": 177,
+  "human_privacy_review_complete": false,
+  "human_date_review_complete": false,
+  "annotations_complete": false,
+  "text_version": "team-contact-redacted-v1",
+  "contact_pattern_scan_passed": true
+}
