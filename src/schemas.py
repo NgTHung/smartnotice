@@ -359,12 +359,54 @@ class AppliedGroupFeedback(Record):
     """Keep the original user note and the assistant's explicit application."""
 
     note: GroupReviewNote
-    outcome: Literal["accepted", "partitioned", "content_separated", "deferred", "not_reviewed"]
+    outcome: Literal[
+        "accepted", "partitioned", "content_separated", "merged", "deferred", "not_reviewed"
+    ]
     partitions: list[list[str]]
     additional_members: list[str] = Field(default_factory=list)
     rationale: str
     affected_review_ids: list[str]
     application_author: ReviewAuthor
+
+
+class GroupMergeResolution(Record):
+    """Join explicitly selected groups while keeping their work steps distinct.
+
+    A merge is an interpretation of user feedback, not independent human pair
+    annotation. Each cross-group pair receives the supplied distinct-task relation.
+    """
+
+    group_ids: list[str] = Field(min_length=2)
+    task_relation: Literal["DIFFERENT_TASK", "DIFFERENT_SESSION", "CONDITIONAL_TASK"] = (
+        "DIFFERENT_TASK"
+    )
+    rationale: str = Field(min_length=1)
+    evidence: list[EvidenceQuote] = Field(default_factory=list)
+
+
+class GroupDisplayLabel(Record):
+    """Name a group from quoted source text without adding a student task."""
+
+    group_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    evidence: list[EvidenceQuote] = Field(min_length=1)
+    author: ReviewAuthor
+
+
+class GroupDisplayLabels(Record):
+    """Bind presentation labels to one assembly without changing its fingerprint."""
+
+    kind: Literal["event_group_display_labels"] = "event_group_display_labels"
+    assembly_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    labels: list[GroupDisplayLabel]
+
+
+class GroupFeedbackPlan(Record):
+    """Supply explicit split/merge resolutions and source-backed group names."""
+
+    resolutions: list[GroupFeedbackResolution] = Field(default_factory=list)
+    merges: list[GroupMergeResolution] = Field(default_factory=list)
+    display_labels: list[GroupDisplayLabel] = Field(default_factory=list)
 
 
 class GroupFeedbackResult(Record):
@@ -375,6 +417,73 @@ class GroupFeedbackResult(Record):
     reviews: list[GroupingReview]
     applications: list[AppliedGroupFeedback]
     unreviewed_group_ids: list[str]
+
+
+class AutomaticGroupingConfig(Record):
+    """Set unfitted lexical candidate thresholds, never probability cutoffs."""
+
+    candidate_similarity: float = Field(default=0.35, gt=0, le=1)
+    min_shared_tokens: int = Field(default=3, ge=1)
+    min_identity_tokens: int = Field(default=2, ge=2)
+
+
+class AutomaticPairProposal(Record):
+    """Keep an automatic pair decision separate from supplied review labels."""
+
+    origin: Literal["rule_proposal"] = "rule_proposal"
+    candidate_reasons: list[str] = Field(min_length=1)
+    reasons: list[str] = Field(min_length=1)
+    lexical_similarity: float = Field(ge=0, le=1)
+    pair: GroupingReview
+
+    @model_validator(mode="after")
+    def check_origin(self):
+        """Prevent a rule proposal from asserting human review authorship."""
+        if self.pair.author.reviewer_kind != "ai_assistant":
+            raise ValueError("Automatic proposals require nonhuman attribution")
+        return self
+
+
+class AutomaticGroupingResult(Record):
+    """Exchange rule proposals and their provisional assembled groups."""
+
+    rule_version: Literal["automatic-event-grouping-v1"] = "automatic-event-grouping-v1"
+    config: AutomaticGroupingConfig
+    generated_at: datetime
+    compared_pairs: int = Field(ge=0)
+    proposals: list[AutomaticPairProposal]
+    assembly: EventGroupAssembly
+
+    @model_validator(mode="after")
+    def check_generation_time(self):
+        """Reject generation times without a recorded timezone."""
+        if self.generated_at.utcoffset() is None:
+            raise ValueError("Generation time requires a timezone")
+        return self
+
+
+class GroupingPairComparison(Record):
+    """Compare one supplied pair with predictions without labeling omitted pairs."""
+
+    reference_review_id: str
+    left: str
+    right: str
+    reference_decision: str
+    proposed_decision: str | None
+    reference_task_relation: str
+    proposed_task_relation: str | None
+    same_resulting_group: bool
+    same_resulting_task: bool
+    issues: list[str]
+
+
+class AutomaticGroupingComparison(Record):
+    """Record development diagnostics, not independent human evaluation metrics."""
+
+    kind: Literal["grouping_development_comparison"] = "grouping_development_comparison"
+    reference_fingerprint: str
+    independent_evaluation: Literal[False] = False
+    pairs: list[GroupingPairComparison]
 
 
 class Profile(Record):

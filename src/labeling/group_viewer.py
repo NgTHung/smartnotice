@@ -4,7 +4,13 @@ import json
 
 from smartnotice.labeling.event_groups import assembly_fingerprint
 from smartnotice.labeling.llm import text_sha256
-from smartnotice.schemas import EventGroupAssembly, EvidenceQuote, GroupFeedbackResult, Notice
+from smartnotice.schemas import (
+    EventGroupAssembly,
+    EvidenceQuote,
+    GroupDisplayLabels,
+    GroupFeedbackResult,
+    Notice,
+)
 
 
 def render_group_review(
@@ -13,6 +19,7 @@ def render_group_review(
     template: str,
     *,
     feedback: GroupFeedbackResult | list[GroupFeedbackResult] | None = None,
+    labels: GroupDisplayLabels | None = None,
 ) -> str:
     """Render a local-only page with exact source text and safely embedded JSON.
 
@@ -25,6 +32,8 @@ def render_group_review(
     Optional applied feedback must match the supplied pair records and resulting
     partitions; historical notes are displayed separately from new browser notes.
     For multiple batches, the last applied note for each resulting group wins.
+    Display labels must match the fingerprint and quote the title in a member's
+    source text. A display label creates neither an event nor a student task.
     """
     marker = "__SMARTNOTICE_REVIEW_DATA__"
     if template.count(marker) != 1:
@@ -98,11 +107,28 @@ def render_group_review(
                 check_quote(change.old)
     data = assembly.model_dump(mode="json")
     fingerprint = assembly_fingerprint(assembly)
+    if labels is not None:
+        if labels.assembly_fingerprint != fingerprint:
+            raise ValueError("Display labels target a different assembly fingerprint")
+        group_map = {g.group_id: g for g in assembly.groups}
+        seen_labels = set()
+        for label in labels.labels:
+            if label.group_id not in group_map or label.group_id in seen_labels:
+                raise ValueError("Unknown or duplicate display-label group")
+            seen_labels.add(label.group_id)
+            for quote in label.evidence:
+                check_quote(quote)
+                if quote.doc_id not in group_map[label.group_id].document_ids:
+                    raise ValueError("Display-label evidence must come from its group")
+            title = " ".join(label.title.casefold().split())
+            if not any(title == " ".join(q.text.casefold().split()) for q in label.evidence):
+                raise ValueError("Display label must reproduce a quoted source title")
     applied_feedback = {}
     batches = feedback if isinstance(feedback, list) else [feedback] if feedback else []
     for batch in batches:
         if {r.review_id: r for r in batch.reviews} != {r.review_id: r for r in assembly.reviews}:
             raise ValueError("Applied feedback pair records do not match this assembly")
+        batch_feedback = {}
         for application in batch.applications:
             if application.outcome in {"deferred", "not_reviewed"}:
                 continue
@@ -113,15 +139,28 @@ def render_group_review(
                 targets = [g for g in assembly.groups if set(g.members) == set(partition)]
                 if len(targets) != 1:
                     raise ValueError("Applied feedback partition does not resolve to one group")
-                applied_feedback[targets[0].group_id] = {
-                    "group_id": targets[0].group_id,
-                    "source_group_id": application.note.group_id,
-                    "outcome": application.outcome,
+                gid = targets[0].group_id
+                note = {
+                    "group_id": application.note.group_id,
                     "status": application.note.status,
                     "text": application.note.text,
-                    "rationale": application.rationale,
                     "updated_at": application.note.updated_at.isoformat(),
                 }
+                previous = batch_feedback.get(gid)
+                source_notes = (previous["source_notes"] if previous else []) + [note]
+                batch_feedback[gid] = {
+                    "group_id": gid,
+                    "source_group_id": application.note.group_id,
+                    "outcome": application.outcome,
+                    "status": "needs_check"
+                    if application.outcome == "merged"
+                    else application.note.status,
+                    "text": "\n".join(dict.fromkeys(n["text"] for n in source_notes if n["text"])),
+                    "rationale": application.rationale,
+                    "updated_at": application.note.updated_at.isoformat(),
+                    "source_notes": source_notes,
+                }
+        applied_feedback.update(batch_feedback)
     payload = {
         "viewer_version": "smartnotice-group-viewer-v1",
         "assembly_fingerprint": fingerprint,
@@ -140,6 +179,8 @@ def render_group_review(
             for doc in sorted(used)
         ],
     }
+    if labels is not None:
+        payload["display_labels"] = labels.model_dump(mode="json")
     encoded = json.dumps(payload, ensure_ascii=False)
     for char, escaped in [
         ("&", "\\u0026"),

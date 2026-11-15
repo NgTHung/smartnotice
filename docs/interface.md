@@ -118,6 +118,30 @@ Different terminal values for a time, location or status field produce `competin
 
 The [grouping procedure](event-grouping.md#dựng-nhóm-từ-quyết-định-có-tác-giả) explains use. `tools/build_event_groups.py` validates before creating a new private directory and writes `assembly.json`, `groups.jsonl`, `conflicts.jsonl`, `review_groups.md`, `run.json` and `checksums.json`. Run metadata records input/code/lock hashes, environment, author kinds and workflow counts. Existing destinations are refused.
 
+## Propose and assemble groups automatically
+
+`propose_event_groups` in [`automatic_grouping.py`](../src/labeling/automatic_grouping.py) takes Notice records, validated Annotations, a timezone-aware `generated_at`, optional `AutomaticGroupingConfig` and optional attributed `TimeBoundaryReview` records. It uses the same mention snapshots and source quotes as `build_event_groups`. Pair reviews, approved group membership and a reference assembly are excluded from prediction inputs. Existing annotation and boundary authorship remains intact.
+
+| Record | Contract |
+|---|---|
+| `AutomaticGroupingConfig` | Unfitted lexical candidate Jaccard threshold `(0, 1]`, default `0.35`; minimum shared lexical tokens, default `3`; minimum informative identity tokens, default `2`, at least `2` |
+| `AutomaticPairProposal` | `origin=rule_proposal`, candidate reasons, decision reasons, lexical similarity and a source-backed `GroupingReview`; human pair authorship is rejected |
+| `AutomaticGroupingResult` | Rule version `automatic-event-grouping-v1`, config, timezone-aware generation time, total pair count, proposals and provisional `EventGroupAssembly` |
+| `GroupingPairComparison` | One explicit reference pair, expected/proposed decision and task relation, resulting group/task membership and mismatch reasons; missing candidates have null proposed fields |
+| `AutomaticGroupingComparison` | Kind `grouping_development_comparison`, exact reference fingerprint, compared pairs and `independent_evaluation=false` |
+
+Candidate reasons combine shared explicit codes/titles, informative ACTION overlap, source URLs and lexical evidence overlap. URL sharing and lexical similarity alone cannot establish event identity. Identity requires a shared explicit event code, or a distinctive name with a matching explicit period or full-date anchor. Sender and document-level collection groups do not supply identity. Features use each mention's selected evidence sentences, not the whole email; ambiguous evidence containing multiple event codes or numbered specialties abstains. This is a fixed rule baseline without fitted features or calibrated probabilities.
+
+Different explicit periods, event codes or numbered specialty titles can produce `DIFFERENT_EVENT`. Other unresolved identity produces `UNCLEAR`. Task families and ACTION identity distinguish repetitions from separate tasks; annotated conditions and named sessions preserve distinct obligations. Time conflicts are checked within `SAME_TASK`, not across registration, attendance and other tasks. Unrecognized task families remain `UNRESOLVED` rather than being assumed equivalent.
+
+An automatic `UPDATE_OF` requires matching identity/task, explicit change language on exactly one side and unique annotated old/new time evidence for each changed field. The explicit change source is left/new; email ordering alone does not establish direction. An absent old field is recorded as null. Interval/invalid-date ambiguity, unresolved update direction, and location/status changes abstain. Original qualifiers, quotes and offsets remain in facts; different deadline qualifiers are not silently equated. The builder preserves all source values and update history.
+
+Every pair inside an initially positive connected component is classified, including pairs omitted by candidate retrieval. Contradictions reach the builder's quarantine behavior. Proposals use `reviewer_id=automatic_grouping_rules_v1`, the existing nonhuman `reviewer_kind=ai_assistant`, and explicit rule origin/rationale; no human review or group approval is created. Group and privacy review flags remain true.
+
+`compare_grouping_reference` requires the same mention set and exact source/annotation versions. It compares only explicit reference pairs and records missing candidates, decision/task mismatches, update direction/quotes and resulting group/task mismatches. It does not derive negative pairs from singletons or group approval. The reference is read after predictions in `tools/run_automatic_grouping.py`, so supplying it cannot change predictions.
+
+The runner validates and renders before creating a new directory under `data/processed` or `reports/generated`; it refuses existing destinations. Outputs are `result.json`, `pair_proposals.jsonl`, `pair_decisions.jsonl`, `assembly.json`, `groups.jsonl`, `conflicts.jsonl`, `index.html`, `run.json` and `checksums.json`. A supplied reference adds `comparison.json` and `comparison.md`. Run metadata records source/code/template/lock hashes, generation time, environment, config, workflow counts, diagnostic counts and provenance limits. `--generated-at` permits exact replay with unchanged inputs and implementation. No saved approvals, input records or split assignments are overwritten.
+
 ## Apply local group review notes
 
 `assembly_fingerprint` in `event_groups.py` hashes the canonical assembly with the same JSON settings as `annotation_sha256`. The offline HTML viewer binds browser notes to that fingerprint and exports `LocalGroupReviewNotes`. This is a draft feedback format, not the Label Studio human review ledger.
@@ -127,10 +151,14 @@ The [grouping procedure](event-grouping.md#dựng-nhóm-từ-quyết-định-có
 | `GroupReviewNote` | Group ID, `not_seen` / `looks_ok` / `needs_check` / `suggest_split`, original text and timezone-aware update time |
 | `LocalGroupReviewNotes` | Kind `local_group_review_notes`, `draft=true`, exact assembly fingerprint, timezone-aware export time and unique group entries not newer than the export |
 | `GroupFeedbackResolution` | Explicit `ACCEPT`, `PARTITION` or `SEPARATE_CONTENT` plan, rationale, optional source evidence and member references |
+| `GroupMergeResolution` | At least two distinct existing group IDs, a distinct-task/session/conditional relation, rationale and optional evidence; each selected group requires a submitted note |
+| `GroupFeedbackPlan` | Explicit resolutions, group merges and source-backed display labels; free text is not parsed to infer these choices |
 | `AppliedGroupFeedback` | Original note, outcome, partitions, additional content references, affected pair IDs and assistant application attribution |
 | `GroupFeedbackResult` | Source notes hash/fingerprint, derived pair records, application ledger and old group IDs absent from the submitted notes |
 
 `apply_group_feedback` in [`group_feedback.py`](../src/labeling/group_feedback.py) rejects a stale fingerprint, duplicate/unknown groups, unresolved split requests and incomplete or overlapping partitions. It preserves input objects. `looks_ok` records acceptance at group scope; other pair metadata and authorship remain unchanged unless the application adds evidence or changes a decision. Cross-group pairs are not approved by acceptance of either group alone.
+
+Optional `merges` explicitly joins groups representing different steps of one event. A merge replaces every crossing decision with `SAME_EVENT` and the supplied distinct-task relation, adding missing pairs with source evidence. Within-group decisions remain intact. A group cannot appear in overlapping merges, merge with an unread group, or both split and merge in one application. The result records `outcome=merged` for each original note and the complete resulting membership; original note statuses and timestamps remain intact. A `needs_check` note can be resolved by an explicit merge plan, never by interpreting its prose automatically.
 
 An explicit partition replaces crossing positive decisions with `DIFFERENT_EVENT`, clears their task/update relation and adds missing cross-partition negative pairs with source evidence. Within-partition task relations remain intact. `SEPARATE_CONTENT` keeps existing matched mentions while declaring additional source mentions for a caller to annotate and group separately; the caller must validate those annotations and build the resulting assembly before persisting an applied result. Free text is never parsed as an automatic split rule.
 
@@ -138,4 +166,10 @@ The original user group notes remain attributed to their source export. Structur
 
 `render_group_review` in [`group_viewer.py`](../src/labeling/group_viewer.py) validates source hashes, quote offsets and group/task references before embedding escaped JSON in a standalone local HTML template. It includes only source documents used by the assembly and omits `source_ref`. Optional feedback accepts one `GroupFeedbackResult` or an ordered list; every batch must match the assembly's pair records and resulting partitions. The last applied note per group takes precedence. Historical notes are shown separately from new browser notes; an applied `looks_ok` supplies the displayed approval unless a newer browser note overrides it.
 
-`tools/render_group_review.py` accepts repeatable `--feedback` in that order and reads `tools/templates/group_review.html.template`. It writes a new HTML file plus input/output hashes under `reports/generated`, refusing existing destinations. Rendering does not change annotations or privacy clearance.
+When several original notes map to one merged group, the viewer retains each in `source_notes` and displays the combined text. A merged group starts with `needs_check` for reviewing the changed result; acceptance of its former groups does not silently approve the combined membership.
+
+`GroupDisplayLabel` contains a group ID, title, supporting quotes and author. `GroupDisplayLabels` binds those labels to an exact assembly fingerprint. The renderer rejects unknown/duplicate groups, quotes outside member documents and titles that differ from all quoted titles after case/whitespace normalization. Naming a group changes neither its tasks nor its assembly fingerprint. Such labels can name a campaign whose existing tasks describe only a ceremony.
+
+`tools/render_group_review.py` accepts repeatable `--feedback`, optional `--labels`, and reads `tools/templates/group_review.html.template`. It writes a new HTML file plus input/output hashes under `reports/generated`, refusing existing destinations. Rendering does not change annotations or privacy clearance.
+
+`tools/apply_group_review.py` accepts the viewed assembly, matching Notices/Annotations, exported notes and a `GroupFeedbackPlan`. It first reproduces the viewed assembly, then applies resolutions, builds and renders the result before creating a new private output directory. It supports accepting, partitioning and merging existing mentions; `SEPARATE_CONTENT` requires a separate validated annotation migration. Outputs retain the byte-identical source notes/plan, feedback ledger, pair reviews, assembly/groups/conflicts, display labels, HTML, run metadata and checksums. `--applied-at` enables exact replay. Source records, original approvals and previous pages are never replaced.

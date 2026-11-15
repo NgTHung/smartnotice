@@ -129,6 +129,18 @@ Một cặp chỉ được đề xuất gộp tự động khi câu bằng chứ
 
 Mở `review_groups.md` để đọc các nhóm có nhiều thành viên, rồi kiểm tra `events.jsonl` và `pair_decisions.jsonl` để truy vết nguồn và lý do. Không dùng số nhóm làm độ chính xác. Thời gian chạy chỉ mô tả lần chạy có cấu hình trong `run.json`; chưa có tối ưu hay so sánh hiệu năng.
 
+## Chạy đề xuất gom nhóm tự động
+
+Dùng lệnh `tools/run_automatic_grouping.py` trong [README](../README.md) để nối tìm cặp ứng viên, ra quyết định, dựng nhóm và xuất trang HTML trong một lượt. Đầu vào là Notice và Annotation đã lưu; mỗi ACTION cùng bằng chứng liên quan là một mục được so sánh. Các hoạt động tham dự vẫn đi vào quy trình khi có event trong annotation, không cần thêm nhãn span `EVENT`. Lệnh không đọc hộp thư hoặc gọi nhà cung cấp mô hình.
+
+Bản quy tắc dùng mã sự kiện, tên trong ACTION hoặc tiêu đề có cấu trúc, kỳ/đợt, mốc ngày và đường dẫn trong bằng chứng. Tên chung, một URL dùng lại hoặc nội dung giống nhau chỉ giúp tìm ứng viên. Chỉ đề xuất cùng nhóm khi có căn cứ nhận diện đủ theo [contract](interface.md#propose-and-assemble-groups-automatically). Việc khác bước, khác ca và nghĩa vụ có điều kiện được giữ riêng; các hạn khác vai trò hoặc khác đầu việc không tự tạo mâu thuẫn.
+
+Chỉ đề xuất cập nhật thời gian khi nhận diện được sự kiện, đầu việc, phía nêu thay đổi và giá trị mới có annotation hỗ trợ. Không chọn bản mới chỉ dựa vào thời điểm gửi. Các thay đổi địa điểm/trạng thái, nhiều phiên bản cập nhật chưa rõ chiều hoặc thiếu căn cứ được để `UNCLEAR`. Bộ dựng nhóm kiểm tra cả những cặp bắc cầu chưa được bước tìm ứng viên chọn; giữ yêu cầu duyệt cho mọi nhóm.
+
+Mở `index.html` để duyệt nguồn và `pair_proposals.jsonl` để xem căn cứ tìm cặp, lý do quyết định và xuất xứ quy tắc. Nếu có bản tham chiếu cùng snapshot, thêm `--reference-assembly` để tạo `comparison.md` và `comparison.json`. Bản tham chiếu chỉ dùng sau dự đoán. Bảng đối chiếu chỉ xét các cặp có quyết định tường minh; nhóm đơn hoặc xác nhận đồng ý nhóm không tự tạo nhãn phủ định cho mọi cặp còn lại.
+
+Giữ kết quả tự động trong thư mục mới, tách khỏi ledger người dùng. Không kế thừa xác nhận cũ chỉ vì một nhóm tự động có cùng thành viên. Dùng các chỗ thiếu ứng viên, sai quan hệ đầu việc hoặc chưa nhận diện được cập nhật để xây ca kiểm thử tổng hợp và lập lượt duyệt kế tiếp. Đối chiếu trên mẫu đã tham gia phát triển không phải đánh giá độc lập; không báo accuracy/F1 từ đó. Lưu cấu hình và hashes cho từng lượt, không điều chỉnh ngưỡng trên tập kiểm tra dành riêng.
+
 ## Dựng nhóm từ quyết định có tác giả
 
 Sau khi đối chiếu nguồn và sửa trích xuất, lưu quyết định theo `GroupingReview` trong [contract](interface.md#assemble-event-groups-and-tasks). Ghi tác giả thực, thời điểm, hash annotation và bằng chứng cho mỗi cặp. Xác nhận của trợ lý dùng `reviewer_id="ai_assistant"`, `reviewer_kind="ai_assistant"`; không điền thay các ô xác nhận của con người hoặc approvals riêng tư. Các quyết định AI có thể dùng để dựng nhóm đề xuất, với yêu cầu duyệt được giữ nguyên.
@@ -158,6 +170,12 @@ Trang HTML lưu trạng thái và ghi chú nháp trên trình duyệt; nút xu�
 Giữ ghi chú người dùng, thời điểm gốc, hash file và phương án áp dụng trong ledger riêng. Các quyết định cặp được suy ra từ ghi chú có tác giả áp dụng là `ai_assistant`; chúng không trở thành annotation cặp độc lập của con người. Khi bổ sung các mục từ một email nhiều nội dung, kiểm tra source spans, mở rộng tập annotation và gắn lại hashes cho những lần nhắc cũ có nội dung không đổi. Không tách phần lịch nhắc đúng sự kiện chỉ vì email đó còn có một ưu đãi khác.
 
 Khi người dùng chỉ đạo duyệt đồng ý hàng loạt trong hội thoại, lưu nguyên chỉ đạo, tiêu chí chọn nhóm, fingerprint và danh sách ID được áp dụng trong một bản ghi riêng. Thời điểm ghi nhận là lúc áp dụng chỉ đạo, không phải thời điểm quan sát người dùng đọc từng nhóm. Có thể chuyển chỉ đạo thành ghi chú `looks_ok` để hiển thị; không suy ra xác nhận độc lập từng cặp, span hoặc clearance riêng tư. Giữ nguyên bản xuất trình duyệt trước đó.
+
+Khi các nhóm thực chất là những bước của cùng sự kiện, ghi `GroupMergeResolution` với ID của từng nhóm và quan hệ đầu việc. Giữ riêng các bước và mốc thời gian; thay hoặc thêm đầy đủ các cặp băng qua nhóm để tránh còn cạnh `UNCLEAR`/khác sự kiện gây mâu thuẫn. Nếu số thứ tự nhóm và nội dung mô tả không khớp, đối chiếu fingerprint, ID và ACTION trước khi áp dụng. Không dùng vị trí trong danh sách làm định danh bền vững.
+
+Giữ đúng vai trò các mốc trong nguồn: giờ nhận vé là thời gian của việc nhận vé, không phải lịch chiếu hoặc thời hạn sử dụng vé. Chỉ bổ sung bước sử dụng vé hoặc một mốc áp dụng khi nguồn có căn cứ. Khi cần tên chiến dịch để đọc nhóm, dùng nhãn hiển thị có trích dẫn nguồn; tên chương trình không tự tạo thêm nghĩa vụ tham gia của sinh viên.
+
+Dùng `tools/apply_group_review.py` theo lệnh trong [README](../README.md) để dựng lại từ bản đã xem và phương án tường minh. Nhóm mới sau gộp hiển thị cần kiểm tra lại, kèm các ghi chú cũ và lý do xử lý. Nhãn hiển thị chỉ thay tên trên trang, không làm đổi annotation hoặc thêm task.
 
 Xuất lại trang HTML từ kết quả đã dựng, kèm ledger áp dụng góp ý để người duyệt đối chiếu. Trang mặc định cho xem mọi nhóm và các đoạn nguồn liên quan; bật toàn văn khi cần. Các ghi chú bổ sung ở bản mới được lưu theo fingerprint mới, tách khỏi bản đã dùng làm đầu vào.
 

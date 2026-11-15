@@ -2,15 +2,21 @@
 
 import hashlib
 import json
+import shutil
+import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
-from smartnotice.labeling.event_groups import build_event_groups
+from smartnotice.labeling.event_groups import assembly_fingerprint, build_event_groups
 from smartnotice.labeling.group_viewer import render_group_review
 from smartnotice.schemas import (
     Annotation,
     AppliedGroupFeedback,
     Event,
+    EvidenceQuote,
+    GroupDisplayLabel,
+    GroupDisplayLabels,
     GroupFeedbackResult,
     GroupReviewNote,
     Notice,
@@ -122,3 +128,76 @@ def test_applied_user_note_is_bound_to_the_resulting_partition():
         render_group_review(
             assembly, [notice], "__SMARTNOTICE_REVIEW_DATA__", feedback=[feedback, newer]
         )
+
+
+@pytest.mark.parametrize("invalid", [None, "title", "snapshot", "group", "duplicate", "offset"])
+def test_source_backed_display_names_do_not_create_or_change_tasks(invalid):
+    notice, assembly = sample()
+    author = ReviewAuthor(
+        reviewer_id="ai_assistant",
+        reviewer_kind="ai_assistant",
+        reviewed_at=datetime(2026, 11, 9, tzinfo=UTC),
+    )
+    label = GroupDisplayLabel(
+        group_id=assembly.groups[0].group_id,
+        title=notice.text,
+        evidence=[
+            EvidenceQuote(
+                doc_id=notice.doc_id,
+                sentence_id="s1",
+                start=0,
+                end=len(notice.text),
+                text=notice.text,
+            )
+        ],
+        author=author,
+    )
+    labels = GroupDisplayLabels(assembly_fingerprint=assembly_fingerprint(assembly), labels=[label])
+    before = assembly.model_dump()
+    if invalid == "title":
+        label.title = "An unsupported event name"
+    elif invalid == "snapshot":
+        labels.assembly_fingerprint = "f" * 64
+    elif invalid == "group":
+        label.group_id = "unknown"
+    elif invalid == "duplicate":
+        labels.labels.append(label)
+    elif invalid == "offset":
+        label.evidence[0].end -= 1
+    if invalid:
+        with pytest.raises(ValueError):
+            render_group_review(assembly, [notice], "__SMARTNOTICE_REVIEW_DATA__", labels=labels)
+    else:
+        payload = json.loads(
+            render_group_review(assembly, [notice], "__SMARTNOTICE_REVIEW_DATA__", labels=labels)
+        )
+        assert payload["display_labels"]["labels"][0]["title"] == notice.text
+        assert payload["assembly"] == assembly.model_dump(mode="json")
+    assert assembly.model_dump() == before
+
+
+def test_client_keeps_a_merged_group_pending_until_a_fresh_browser_review():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Optional Node.js runtime is unavailable")
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "tools/templates/group_review.html.template").read_text(encoding="utf-8")
+    function = next(
+        line for line in template.splitlines() if line.strip().startswith("function noteFor(group)")
+    )
+    code = (
+        "const vm=require('vm'),assert=require('assert');"
+        "const ctx={notes:{},noteStatuses:{looks_ok:'Accepted',needs_check:'Pending'}};"
+        "vm.createContext(ctx);vm.runInContext(" + json.dumps(function) + ",ctx);"
+        "const group={group_id:'merged',feedback:{status:'needs_check',"
+        "updated_at:'2026-11-09T16:00:00Z'}};"
+        "assert.equal(ctx.noteFor(group).status,'needs_check');"
+        "ctx.notes.merged={status:'looks_ok',text:'Fresh',updated_at:'2026-11-09T17:00:00Z'};"
+        "assert.equal(ctx.noteFor(group).status,'looks_ok');"
+        "ctx.notes.merged.updated_at='2026-11-09T15:00:00Z';"
+        "assert.equal(ctx.noteFor(group).status,'needs_check');"
+    )
+    completed = subprocess.run(
+        [node, "-"], input=code, capture_output=True, text=True, encoding="utf-8"
+    )
+    assert completed.returncode == 0, completed.stderr

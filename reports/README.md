@@ -12,6 +12,9 @@ Reports connect data and experiment claims to repeatable outputs. Keep dated val
 - [Event/task assembly, 2026-11-06](validation-2026-11-06-grouping-assembly.md) records AI confirmations, corrected time evidence, provisional groups, and software/reproduction checks.
 - [Group feedback, 2026-11-09](validation-2026-11-09-group-feedback.md) records user group notes, explicit split resolutions, rebuilt groups, and reproducibility checks.
 - [Singleton approval, 2026-11-09](validation-2026-11-09-singleton-approval.md) records bulk acceptance directed by the user, local review artifacts, and publication checks.
+- [Automatic grouping, 2026-11-09](validation-2026-11-09-automatic-grouping.md) records the offline proposal-to-review workflow, development comparisons and reproducibility checks.
+- [Second group review, 2026-11-10](validation-2026-11-10-group-review-2.md) records the user's merge clarification, source-backed campaign name and preservation checks.
+- [Final group acceptance, 2026-11-10](validation-2026-11-10-group-acceptance.md) records the user's acceptance of all 25 groups and closes this development-sample review round.
 - [Cleaning run, 2026-11-04](validation-2026-11-04-cleaning-run.md) records the staged run over the email archives after emoji removal.
 - [Name masking, 2026-11-04](validation-2026-11-04-name-masking.md) records the name audit and the staged run after its fixes.
 - [Preprocessing run, 2026-11-04](validation-2026-11-04-preprocessing-run.md) identifies the staged outputs produced at a named commit.

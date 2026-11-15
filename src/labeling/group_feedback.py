@@ -10,6 +10,7 @@ from smartnotice.schemas import (
     GroupFeedbackResolution,
     GroupFeedbackResult,
     GroupingReview,
+    GroupMergeResolution,
     LocalGroupReviewNotes,
     ReviewAuthor,
 )
@@ -22,6 +23,7 @@ def apply_group_feedback(
     *,
     notes_sha256: str,
     application_author: ReviewAuthor,
+    merges: list[GroupMergeResolution] | None = None,
 ) -> GroupFeedbackResult:
     """Derive pair decisions from group notes and explicit content resolutions.
 
@@ -34,7 +36,10 @@ def apply_group_feedback(
     Free-text split notes require caller-supplied resolutions; never infer a
     partition from prose. Derived decisions retain an assistant application
     author, while the original user notes and timestamps remain in a separate
-    ledger. Reject stale, duplicate, incomplete or unsupported input with
+    ledger. Explicit merges join supplied groups while preserving their separate
+    steps; they replace every crossing decision rather than creating a conflicting
+    positive bridge. Merge groups require submitted notes and cannot also split.
+    Reject stale, duplicate, incomplete or unsupported input with
     ValueError, without mutating the source assembly or notes.
     """
     notes = LocalGroupReviewNotes.model_validate(notes.model_dump())
@@ -49,6 +54,19 @@ def apply_group_feedback(
         raise ValueError("Duplicate group resolution")
     if set(note_map) - groups.keys() or set(plans) - note_map.keys():
         raise ValueError("Unknown group or resolution without a user note")
+    merges = [GroupMergeResolution.model_validate(m.model_dump()) for m in merges or []]
+    merged_ids = set()
+    for merge in merges:
+        selected = set(merge.group_ids)
+        if len(selected) != len(merge.group_ids) or selected & merged_ids:
+            raise ValueError("Duplicate or overlapping merge groups")
+        if not selected <= note_map.keys():
+            raise ValueError("A merge requires a submitted note for every selected group")
+        if any(gid in plans and plans[gid].mode != "ACCEPT" for gid in selected):
+            raise ValueError("A group cannot both split and merge in the same application")
+        if any(note_map[gid].status == "not_seen" for gid in selected):
+            raise ValueError("Unread feedback cannot supply a merge resolution")
+        merged_ids.update(selected)
     reviews = [r.model_copy(deep=True) for r in assembly.reviews]
     mentions = {m.version.event_ref: m for m in assembly.mentions}
     applications = []
@@ -166,6 +184,51 @@ def apply_group_feedback(
                 application_author=application_author,
             )
         )
+    for merge in merges:
+        ownership = {ref: gid for gid in merge.group_ids for ref in groups[gid].members}
+        combined = sorted(ownership)
+        affected = []
+        pairs = {frozenset((r.left.event_ref, r.right.event_ref)): r for r in reviews}
+        for left, right in combinations(combined, 2):
+            if ownership[left] == ownership[right]:
+                continue
+            key = frozenset((left, right))
+            evidence = member_evidence(left) + member_evidence(right)
+            docs = {q.doc_id for q in evidence}
+            evidence += [q for q in merge.evidence if q.doc_id in docs and q not in evidence]
+            if key in pairs:
+                review = pairs[key]
+                review.decision = "SAME_EVENT"
+                review.task_relation = merge.task_relation
+                review.notice_relation = "OTHER"
+                review.changes = []
+                review.author = application_author.model_copy(deep=True)
+                review.rationale = merge.rationale
+                review.evidence = evidence
+            else:
+                rid = f"merge-{ownership[left][:8]}-{left}-{right}"
+                if any(r.review_id == rid for r in reviews):
+                    raise ValueError("Derived merge review ID collision")
+                review = GroupingReview(
+                    review_id=rid,
+                    left=mentions[left].version,
+                    right=mentions[right].version,
+                    decision="SAME_EVENT",
+                    task_relation=merge.task_relation,
+                    author=application_author,
+                    rationale=merge.rationale,
+                    evidence=evidence,
+                )
+                reviews.append(review)
+            affected.append(review.review_id)
+        for application in applications:
+            if application.note.group_id in merge.group_ids:
+                application.outcome = "merged"
+                application.partitions = [combined]
+                application.rationale = merge.rationale
+                application.affected_review_ids = sorted(
+                    set(application.affected_review_ids + affected)
+                )
     return GroupFeedbackResult(
         notes_sha256=notes_sha256,
         source_assembly_fingerprint=notes.assembly_fingerprint,

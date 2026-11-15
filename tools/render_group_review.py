@@ -8,7 +8,7 @@ from pathlib import Path
 
 from smartnotice.io import read_jsonl
 from smartnotice.labeling.group_viewer import render_group_review
-from smartnotice.schemas import EventGroupAssembly, GroupFeedbackResult, Notice
+from smartnotice.schemas import EventGroupAssembly, GroupDisplayLabels, GroupFeedbackResult, Notice
 
 
 def _sha(path: Path) -> str:
@@ -26,6 +26,7 @@ def main() -> None:
     parser.add_argument("--notices", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--feedback", type=Path, action="append", default=[])
+    parser.add_argument("--labels", type=Path)
     args = parser.parse_args()
     output = args.output.resolve()
     if (
@@ -39,6 +40,8 @@ def main() -> None:
     template = Path(__file__).parent / "templates/group_review.html.template"
     inputs = [args.assembly, args.notices, template, Path("src/labeling/group_viewer.py")]
     inputs.extend(args.feedback)
+    if args.labels:
+        inputs.append(args.labels)
     before = {p.as_posix(): _sha(p) for p in inputs}
     assembly = EventGroupAssembly.model_validate_json(args.assembly.read_text(encoding="utf-8"))
     notices = [Notice.model_validate(row) for row in read_jsonl(args.notices)]
@@ -47,7 +50,13 @@ def main() -> None:
         for path in args.feedback
     ]
     html = render_group_review(
-        assembly, notices, template.read_text(encoding="utf-8"), feedback=feedback
+        assembly,
+        notices,
+        template.read_text(encoding="utf-8"),
+        feedback=feedback,
+        labels=GroupDisplayLabels.model_validate_json(args.labels.read_bytes())
+        if args.labels
+        else None,
     )
     if any(_sha(p) != before[p.as_posix()] for p in inputs):
         raise ValueError("Input changed during rendering")

@@ -1,7 +1,13 @@
 """Check explicit application of user notes, not free-text label guessing."""
 
 import hashlib
+import json
+import re
+import subprocess
+import sys
+import tempfile
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from smartnotice.labeling.event_groups import (
@@ -14,8 +20,11 @@ from smartnotice.schemas import (
     Annotation,
     Event,
     EvidenceQuote,
+    GroupDisplayLabel,
+    GroupFeedbackPlan,
     GroupFeedbackResolution,
     GroupingReview,
+    GroupMergeResolution,
     GroupReviewNote,
     LocalGroupReviewNotes,
     MentionVersion,
@@ -186,3 +195,164 @@ def test_duplicate_notes_and_naive_review_times_are_invalid():
         LocalGroupReviewNotes.model_validate({**notes.model_dump(), "entries": notes.entries * 2})
     with pytest.raises(ValueError, match="timezone"):
         GroupReviewNote(group_id="g", status="looks_ok", text="", updated_at=datetime(2026, 11, 9))
+
+
+def merge_fixture():
+    notices, annotations, initial, author = fixture()
+    reviews = [r.model_copy(deep=True) for r in initial.reviews]
+    for r in reviews:
+        r.decision, r.task_relation = "UNCLEAR", "UNRESOLVED"
+    assembly = build_event_groups(notices, annotations, reviews)
+    group_ids = {ref: g.group_id for g in assembly.groups for ref in g.members}
+    notes = LocalGroupReviewNotes(
+        kind="local_group_review_notes",
+        draft=True,
+        assembly_fingerprint=assembly_fingerprint(assembly),
+        exported_at=datetime(2026, 11, 9, 2, tzinfo=UTC),
+        entries=[
+            GroupReviewNote(
+                group_id=group_ids[ref],
+                status=status,
+                text="Original user note.",
+                updated_at=datetime(2026, 11, 9, 1, tzinfo=UTC),
+            )
+            for ref, status in [("a:a1", "looks_ok"), ("b:a1", "needs_check")]
+        ],
+    )
+    merge = GroupMergeResolution(
+        group_ids=[group_ids["a:a1"], group_ids["b:a1"]],
+        rationale="Explicit user clarification: same event, separate steps.",
+    )
+    return notices, annotations, assembly, author, notes, merge
+
+
+def test_explicit_merge_replaces_crossing_abstention_and_preserves_steps_and_notes():
+    notices, annotations, assembly, author, notes, merge = merge_fixture()
+    before = assembly.model_dump()
+    result = apply_group_feedback(
+        assembly, notes, [], notes_sha256="a" * 64, application_author=author, merges=[merge]
+    )
+    updated = build_event_groups(notices, annotations, result.reviews)
+    combined = next(g for g in updated.groups if "a:a1" in g.members)
+    assert combined.members == ["a:a1", "b:a1"]
+    assert len(combined.tasks) == 2 and len(updated.groups) == 2
+    assert not updated.conflicts
+    assert assembly.model_dump() == before
+    assert {a.outcome for a in result.applications} == {"merged"}
+    assert {a.note.status for a in result.applications} == {"looks_ok", "needs_check"}
+    assert all(a.partitions == [combined.members] for a in result.applications)
+    assert all(a.application_author.reviewer_kind == "ai_assistant" for a in result.applications)
+    assert len(result.unreviewed_group_ids) == 1
+
+
+def test_explicit_merge_can_add_a_pair_omitted_by_candidate_retrieval():
+    notices, annotations, assembly, author, notes, merge = merge_fixture()
+    third = next(g for g in assembly.groups if "c:a1" in g.members)
+    first = next(g for g in assembly.groups if "a:a1" in g.members)
+    notes.entries[0].group_id = third.group_id
+    merge.group_ids = [third.group_id if gid == first.group_id else gid for gid in merge.group_ids]
+    result = apply_group_feedback(
+        assembly, notes, [], notes_sha256="a" * 64, application_author=author, merges=[merge]
+    )
+    updated = build_event_groups(notices, annotations, result.reviews)
+    combined = next(g for g in updated.groups if "b:a1" in g.members)
+    assert combined.members == ["b:a1", "c:a1"] and len(combined.tasks) == 2
+    assert len(result.reviews) == len(assembly.reviews) + 1
+    assert not updated.conflicts
+
+
+@pytest.mark.parametrize("case", ["unknown", "duplicate", "overlap", "unread", "split"])
+def test_unsupported_merge_plans_are_rejected_without_changing_source(case):
+    _, _, assembly, author, notes, merge = merge_fixture()
+    before = assembly.model_dump()
+    merges, plans = [merge], []
+    if case == "unknown":
+        merge.group_ids[1] = "unknown"
+    elif case == "duplicate":
+        merge.group_ids[1] = merge.group_ids[0]
+    elif case == "overlap":
+        merges.append(merge)
+    elif case == "unread":
+        notes.entries[0].status = "not_seen"
+    else:
+        plans.append(
+            GroupFeedbackResolution(
+                group_id=merge.group_ids[0], mode="PARTITION", partitions=[], rationale="Split too."
+            )
+        )
+    with pytest.raises(ValueError):
+        apply_group_feedback(
+            assembly, notes, plans, notes_sha256="a" * 64, application_author=author, merges=merges
+        )
+    assert assembly.model_dump() == before
+
+
+def test_review_runner_merges_steps_retains_original_notes_and_labels_without_new_tasks(tmp_path):
+    notices, annotations, assembly, author, notes, merge = merge_fixture()
+    third = next(g for g in assembly.groups if "c:a1" in g.members)
+    title = notices[2].text
+    plan = GroupFeedbackPlan(
+        merges=[merge],
+        display_labels=[
+            GroupDisplayLabel(
+                group_id=third.group_id,
+                title=title,
+                author=author,
+                evidence=[
+                    EvidenceQuote(doc_id="c", sentence_id="s1", start=0, end=len(title), text=title)
+                ],
+            )
+        ],
+    )
+    inputs = {
+        "assembly": assembly.model_dump_json(),
+        "notes": notes.model_dump_json(),
+        "plan": plan.model_dump_json(),
+        "notices": "\n".join(n.model_dump_json() for n in notices),
+        "annotations": "\n".join(a.model_dump_json() for a in annotations),
+    }
+    paths = {}
+    for name, value in inputs.items():
+        path = tmp_path / (name + ".json")
+        path.write_text(value, encoding="utf-8")
+        paths[name] = path
+    original = {name: p.read_bytes() for name, p in paths.items()}
+    root = Path(__file__).resolve().parents[1]
+    private = root / "reports/generated"
+    private.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="test-review-", dir=private) as local:
+        output = Path(local) / "result"
+        args = [sys.executable, "tools/apply_group_review.py"]
+        for name, path in paths.items():
+            args += ["--" + name, str(path)]
+        args += ["--output-dir", str(output), "--applied-at", author.reviewed_at.isoformat()]
+        completed = subprocess.run(args, cwd=root, capture_output=True, text=True)
+        assert completed.returncode == 0, completed.stderr
+        updated = json.loads((output / "assembly.json").read_text(encoding="utf-8"))
+        assert len(updated["groups"]) == 2
+        assert sum(len(g["tasks"]) for g in updated["groups"]) == 3
+        assert (output / "source_notes.json").read_bytes() == original["notes"]
+        assert all(p.read_bytes() == original[name] for name, p in paths.items())
+        html = (output / "index.html").read_text(encoding="utf-8")
+        payload = json.loads(
+            re.search(
+                r'<script type="application/json" id="review-data">(.*?)</script>', html, re.S
+            )[1]
+        )
+        applied = payload["applied_feedback"][0]
+        assert len(applied["source_notes"]) == 2
+        assert {n["status"] for n in applied["source_notes"]} == {"looks_ok", "needs_check"}
+        assert applied["status"] == "needs_check" and applied["outcome"] == "merged"
+        assert payload["display_labels"]["labels"][0]["title"] == title
+        hashes = json.loads((output / "checksums.json").read_text(encoding="utf-8"))
+        assert all(
+            hashlib.sha256((output / name).read_bytes()).hexdigest() == sha
+            for name, sha in hashes.items()
+        )
+        notes.assembly_fingerprint = "f" * 64
+        paths["notes"].write_text(notes.model_dump_json(), encoding="utf-8")
+        fresh = Path(local) / "stale"
+        args[args.index("--output-dir") + 1] = str(fresh)
+        stale = subprocess.run(args, cwd=root, capture_output=True, text=True)
+        assert stale.returncode != 0 and "fingerprint" in stale.stderr
+        assert not fresh.exists()

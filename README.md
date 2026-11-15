@@ -107,6 +107,33 @@ Omit `--feedback` when no applied notes ledger exists. Repeat it for successive 
 
 Generated HTML pages, browser archives and exported grouping notes stay outside Git. The reusable source template is `tools/templates/group_review.html.template`; synthetic HTML parser fixtures remain tracked.
 
+To propose pairs, assemble groups and create a review page automatically from saved annotations:
+
+```powershell
+uv run python tools/run_automatic_grouping.py `
+  --notices data/annotations/event-grouping-pilot-2026-11-05/sample_notices.jsonl `
+  --annotations data/annotations/event-grouping-review-2026-11-06/user-reviewed-2026-11-09/annotations.grouping.jsonl `
+  --time-boundaries data/annotations/event-grouping-review-2026-11-06/user-reviewed-2026-11-09/time_boundaries.jsonl `
+  --reference-assembly data/processed/event-grouping-user-reviewed-2026-11-09/assembly.json `
+  --output-dir reports/generated/automatic-grouping-local
+```
+
+Open `index.html` and `comparison.md` in the new directory. Omit `--reference-assembly` for new data without a comparison snapshot, and `--time-boundaries` when no attributed time interpretations exist. The [automatic grouping procedure](docs/event-grouping.md#chạy-đề-xuất-gom-nhóm-tự-động) defines candidate evidence, abstentions and development diagnostics. This command uses local rules and saved annotations; it does not call a model provider or collect email.
+
+To apply an exported review and an explicit [resolution plan](docs/interface.md#apply-local-group-review-notes) to the viewed snapshot:
+
+```powershell
+uv run python tools/apply_group_review.py `
+  --assembly reports/generated/automatic-grouping-2026-11-09-final/assembly.json `
+  --notes data/annotations/event-grouping-review-2026-11-06/user-notes/notes-2026-11-09-review-2.json `
+  --plan data/annotations/event-grouping-review-2026-11-06/review-2-resolution-2026-11-09/plan.json `
+  --notices data/annotations/event-grouping-pilot-2026-11-05/sample_notices.jsonl `
+  --annotations data/annotations/event-grouping-review-2026-11-06/user-reviewed-2026-11-09/annotations.grouping.jsonl `
+  --output-dir reports/generated/group-review-local-applied
+```
+
+The command preserves the source export and writes a new ledger, assembly, source-backed display names and `index.html`. A changed merged group requires another look; accepting the old groups does not approve every detail of the new one. Use `--labels` with `tools/render_group_review.py` to include the saved display names when rendering that assembly separately.
+
 ## Find the files
 
 | Path | Purpose |
