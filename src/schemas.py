@@ -270,6 +270,40 @@ class AssemblyMention(Record):
     annotation_origin: str
 
 
+class GroupingModelMention(Record):
+    """Supply one source-bound mention without its annotation or label origin."""
+
+    mention_id: str = Field(min_length=1)
+    doc_id: str
+    version: MentionVersion
+    event: Event
+    spans: list[Span]
+    sentences: list[Sentence]
+
+
+class GroupingLinearModel(Record):
+    """Store a fitted binary logistic regression with ordered feature scaling."""
+
+    kind: Literal["grouping-logistic-v1"] = "grouping-logistic-v1"
+    features: list[str] = Field(min_length=1)
+    mean: list[float]
+    scale: list[float]
+    weights: list[float]
+    intercept: float
+    threshold: float = Field(default=0.5, gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def check_shape(self):
+        """Require one mean, positive scale and coefficient per feature."""
+        if any(
+            len(values) != len(self.features) for values in (self.mean, self.scale, self.weights)
+        ):
+            raise ValueError("Model parameter dimensions do not match the feature list")
+        if any(value <= 0 for value in self.scale):
+            raise ValueError("Model scales must be positive")
+        return self
+
+
 class GroupedFact(Record):
     """Preserve a source value and explicit supersession links without deletion."""
 

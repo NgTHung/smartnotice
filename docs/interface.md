@@ -88,6 +88,12 @@ Join event or profile pair records by `doc_id` and inherit the assigned fold. Th
 
 `allocate_group_folds` takes prepared assignments and explicit lists of document IDs to keep together. It checks that each referenced document exists. Callers can supply a precautionary constraint for an unresolved event link. Record the reason outside the fold assignments and exclude the constraint from event labels.
 
+### Score pairs for shared event identity
+
+`GroupingModelMention` contains `mention_id`, `doc_id`, the mention version, action event, spans and evidence sentences. The runner validates exact source offsets and hashes before constructing features. Pair rows name two mention IDs in `left` and `right` and give a unique `review_id` and a `decision`. The train export also records `left_fold`, `right_fold` and `same_event`. These fields must agree with the frozen assignments and decision. Evaluation can retain `UNCLEAR` with a null target.
+
+`GroupingLinearModel` stores the ordered feature names, scaling means and standard deviations, weights, intercept and decision threshold as JSON. The model predicts a single score for shared event identity. `SAME_EVENT` and `UPDATE_OF` both supply positive examples. The score supports pair ranking. Event assembly and update direction follow their respective contracts.
+
 ## Exchange event grouping proposals
 
 `import_prediction_tasks` in `src/labeling/studio.py` validates saved prediction tasks against Notice text, source/text/prediction hashes and unique document IDs. It accepts one prediction per task and rejects human completions, unsupported results and unlinked spans. Returned Annotation objects have `annotator_id="model_prediction"`; conversion creates no human review record. `annotation_results` serializes an already validated Annotation into Label Studio spans and relations without assigning authorship or review status.

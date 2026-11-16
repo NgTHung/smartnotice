@@ -31,6 +31,12 @@ Review proposed links that cross a frozen split or more than one CV fold first. 
 
 Before freezing a successor split, record the reviewed links and any quarantine, keep web holdout components reserved, and check group membership across all splits. Review class and source counts for each fold before fitting. For a single-label task with enough groups per class, compare [StratifiedGroupKFold](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.StratifiedGroupKFold.html) if the imbalance matters; a document may contain several event labels, so do not replace its annotations with a single label merely to stratify. Preserve the original split as a historical snapshot.
 
+## Fit and test a grouping baseline
+
+Run `tools/run_grouping_model.py train` with `--dataset` pointing to the frozen grouping release and `--output-dir` pointing to a new directory under `reports/generated`. Use `uv run --group models python`. The command fits scikit-learn logistic regression and its scaler inside each fold, saves out-of-fold predictions and refits a JSON model on the entire train set. In each fold, both endpoints must belong to validation for a pair to be scored. Both must belong to training for a pair to be fitted. The [document contract](interface.md#score-pairs-for-shared-event-identity) describes the input records.
+
+Use the separate `evaluate` command with `--reviewed-holdout`, `--test-notices`, `--model-dir`, `--dataset` and a new `--output-dir`. Freeze case selection and source judgments before viewing scores. Report aggregate counts by decision origin and document selection method. Set aside unresolved pairs when computing scores and report their count. Report positive precision, recall and F1, macro-F1 and confusion counts together. A run with assistant judgments can test transfer to those held-out documents. Estimate generalization with independently reviewed pairs and report candidate recall separately from scoring among selected pairs.
+
 ## Compare models
 
 The model families and course comparison requirement live in the [requirements summary](assignment.md). For each proposed comparison, record the exact model/checkpoint identity, tokenizer, software versions, parameters, training seed, hardware, time, and checkpoint path. Verify model capabilities and access conditions against their official sources before implementation.
