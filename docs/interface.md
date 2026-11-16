@@ -68,6 +68,26 @@ Source threads and manually assigned template groups merge with exact/near text 
 
 Any group containing a reserved web notice is removed from the ordinary pool. Its web documents receive `domain_test`; related email receives `excluded`. Each assignment records its `seed` and `similarity`. Persist assignments and review group merges before training. Synthetic flags travel with every notice and derived pair.
 
+### Plan folds from reviewed events
+
+`tools/plan_group_folds.py` reads a frozen JSONL with one row per `doc_id`, a group assembly, and the notes export for that exact assembly. The input `FrozenGroupAssignment` requires `doc_id`, `group_id` (20 lowercase hex characters), `split` and a SHA-256 `text_sha256` of the UTF-8 prepared text. It also accepts `data_sha256`, `seed` and `similarity`. A row without a prepared text hash cannot establish that the review and assignment describe the same snapshot.
+
+`plan_group_folds` checks the notes fingerprint, resolves each assembly mention against the frozen text hash and verifies that the groups partition the assembly mentions. Only `looks_ok` groups contribute reviewed event links. Free text stays in the source notes. Frozen document groups and reviewed event links form connected components over documents, including when one document contains mentions in multiple event groups. Only components entirely in `train` can enter cross-validation. Fewer eligible groups than requested folds is an error.
+
+The runner writes these records to a new directory under `reports/generated`:
+
+| File | Contents |
+|---|---|
+| `fold_assignments.jsonl` | One row per frozen document, preserving `doc_id`, `group_id` and `split`; `fold_group_id` hashes the sorted component's document IDs. `fold` is the zero-based validation fold; null means ineligible, with `exclusion_reason` of `outside_train` or `linked_to_outside_train`. |
+| `reviewed_event_links.jsonl` | Assembly event group ID and distinct document IDs for each accepted group with more than one document. |
+| `split_conflicts.jsonl` | The derived component ID and its document IDs by frozen split for each component spanning splits. |
+| `provisional_review_queue.jsonl` | Optional proposed event groups with more than one document, their frozen splits and assigned CV folds. Proposals never affect assignments. |
+| `run.json`, `checksums.json` | Grouping and fold counts, algorithm, seed, Python version, input/code/lock hashes, notes fingerprint and output hashes. |
+
+Join event or profile pair records by `doc_id` and inherit the assigned fold. The [evaluation procedure](evaluation.md#plan-group-k-fold-from-reviewed-events) explains how to use the plan and handle conflicts before evaluation.
+
+`allocate_group_folds` takes prepared assignments and explicit lists of document IDs to keep together. It checks that each referenced document exists. Callers can supply a precautionary constraint for an unresolved event link. Record the reason outside the fold assignments and exclude the constraint from event labels.
+
 ## Exchange event grouping proposals
 
 `import_prediction_tasks` in `src/labeling/studio.py` validates saved prediction tasks against Notice text, source/text/prediction hashes and unique document IDs. It accepts one prediction per task and rejects human completions, unsupported results and unlinked spans. Returned Annotation objects have `annotator_id="model_prediction"`; conversion creates no human review record. `annotation_results` serializes an already validated Annotation into Label Studio spans and relations without assigning authorship or review status.

@@ -17,6 +17,8 @@ Reports connect data and experiment claims to repeatable outputs. Keep dated val
 - [Final group acceptance, 2026-11-10](validation-2026-11-10-group-acceptance.md) records the user's acceptance of all 25 groups and closes this development-sample review round.
 - [Full email grouping, 2026-11-15](validation-2026-11-15-full-grouping.md) records the expanded saved-prediction workflow, 434-document run, review worklist and reproducibility checks.
 - [Grouping handoff, 2026-11-15](validation-2026-11-15-grouping-handoff.md) records JavaScript behavior checks and the private handoff for group and empty-prediction review.
+- [Group K-fold, 2026-11-16](validation-2026-11-16-group-kfold.md) records the v3.3 structure audit, reviewed event conflicts and reproducible development fold plan.
+- [Grouping training data, 2026-11-16](validation-2026-11-16-grouping-training.md) records the priority source review, successor split and labeled training pairs.
 - [Cleaning run, 2026-11-04](validation-2026-11-04-cleaning-run.md) records the staged run over the email archives after emoji removal.
 - [Name masking, 2026-11-04](validation-2026-11-04-name-masking.md) records the name audit and the staged run after its fixes.
 - [Preprocessing run, 2026-11-04](validation-2026-11-04-preprocessing-run.md) identifies the staged outputs produced at a named commit.

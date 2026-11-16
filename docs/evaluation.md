@@ -8,6 +8,29 @@ Use the reviewed grouped split assignments defined in the [data contract](interf
 
 Fit TF-IDF, feature selection, preprocessing statistics, hyperparameters, and calibration using training or validation data only. Exclude synthetic demo notices from research measurements. Record source balance, excluded groups, missing labels, and the actual number of documents/events/pairs in each split.
 
+## Plan Group K-fold from reviewed events
+
+Use the [event grouping procedure](event-grouping.md) to identify notices about the same edition of an event or the same round of work. Preserve the original notice, reminders and directed updates with their evidence. An email with several events can connect several families for evaluation because its entire text is a single model input; this does not merge the event identities themselves.
+
+[Group K-fold](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.GroupKFold.html) evaluates each group once in a validation fold and uses the other groups to fit the model in that iteration. It takes group IDs as input. SmartNotice's allocator orders eligible groups by descending document count and assigns each to the fold with the fewest documents so far. The seed breaks equal-size group ties. This balances document counts approximately; it does not stratify event labels or sources, and exact fold assignments need not match scikit-learn's.
+
+To reproduce the v3.3 development plan using the original review export:
+
+```powershell
+uv run python tools/plan_group_folds.py `
+  --assignments data/annotations/split_65_15_20_v3_3_2026-11-15/assignments.jsonl `
+  --reviewed-assembly reports/generated/automatic-grouping-2026-11-09-final/assembly.json `
+  --notes data/annotations/event-grouping-review-2026-11-06/user-notes/notes-2026-11-09-review-3.json `
+  --proposed-assembly reports/generated/automatic-grouping-full-2026-11-15/assembly.json `
+  --folds 5 --seed 42 --output-dir reports/generated/group-cv-local
+```
+
+For fold `i`, use rows with `fold == i` to validate and rows with another non-null fold to fit. Keep the frozen `validation`, `test` and `domain_test` outside these folds. The [fold contract](interface.md#plan-folds-from-reviewed-events) defines exclusion reasons and artifacts. A plan that excludes the training side of a conflict does not resolve whether the frozen holdout is suitable for final evaluation.
+
+Review proposed links that cross a frozen split or more than one CV fold first. Compare the event name, edition or year, event-specific links, and source references to earlier communications. A reminder can repeat the same task; an extension changes a particular field on the earlier task and keeps both values in its history. Leave unclear links for review. Use the reviewed sample as a regression set, and use new independent pairs and difficult negatives to measure candidate recall and pair precision/recall by relation. Keep holdout decisions and source evidence from influencing rule or threshold selection.
+
+Before freezing a successor split, record the reviewed links and any quarantine, keep web holdout components reserved, and check group membership across all splits. Review class and source counts for each fold before fitting. For a single-label task with enough groups per class, compare [StratifiedGroupKFold](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.StratifiedGroupKFold.html) if the imbalance matters; a document may contain several event labels, so do not replace its annotations with a single label merely to stratify. Preserve the original split as a historical snapshot.
+
 ## Compare models
 
 The model families and course comparison requirement live in the [requirements summary](assignment.md). For each proposed comparison, record the exact model/checkpoint identity, tokenizer, software versions, parameters, training seed, hardware, time, and checkpoint path. Verify model capabilities and access conditions against their official sources before implementation.

@@ -145,6 +145,8 @@ uv run python tools/apply_group_review.py `
 
 The command preserves the source export and writes a new ledger, assembly, source-backed display names and `index.html`. A changed merged group requires another look; accepting the old groups does not approve every detail of the new one. Use `--labels` with `tools/render_group_review.py` to include the saved display names when rendering that assembly separately.
 
+To check whether reviewed events cross an existing split and plan train-only Group K-fold, use [the fold planning procedure](docs/evaluation.md#plan-group-k-fold-from-reviewed-events). It preserves the frozen split and writes a separate assignment file for cross-validation.
+
 ## Find the files
 
 | Path | Purpose |

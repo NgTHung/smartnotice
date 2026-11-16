@@ -28,6 +28,39 @@ class Record(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+FrozenSplit = Literal["train", "validation", "test", "domain_test", "excluded"]
+
+
+class FrozenGroupAssignment(Record):
+    """Bind one document to the frozen split and its prepared text hash."""
+
+    doc_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    group_id: str = Field(pattern=r"^[a-f0-9]{20}$")
+    split: FrozenSplit
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    data_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    seed: int | None = None
+    similarity: float | None = Field(default=None, gt=0, le=1)
+
+
+class GroupFoldAssignment(Record):
+    """Give a document its frozen split and optional zero-based CV validation fold."""
+
+    doc_id: str
+    group_id: str
+    split: FrozenSplit
+    fold_group_id: str
+    fold: int | None = Field(ge=0)
+    exclusion_reason: Literal["outside_train", "linked_to_outside_train"] | None
+
+
+class ReviewedEventLink(Record):
+    """Project one accepted event group's distinct document IDs for CV grouping."""
+
+    event_group_id: str
+    doc_ids: list[str]
+
+
 class Sentence(Record):
     sentence_id: str
     start: int = Field(ge=0)
