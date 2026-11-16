@@ -147,6 +147,8 @@ The command preserves the source export and writes a new ledger, assembly, sourc
 
 To check whether reviewed events cross an existing split and plan train-only Group K-fold, use [the fold planning procedure](docs/evaluation.md#plan-group-k-fold-from-reviewed-events). It preserves the frozen split and writes a separate assignment file for cross-validation.
 
+See [Tổng hợp grouping](<reports/Tổng hợp grouping.md>) for the grouping work, evaluation results and references to local run evidence.
+
 ## Find the files
 
 | Path | Purpose |

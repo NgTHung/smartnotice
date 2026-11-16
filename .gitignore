@@ -6,6 +6,15 @@ __pycache__/
 .ruff_cache/
 .ipynb_checkpoints/
 .env
+.env.*
+!.env.example
+/.vscode/
+/.idea/
+/.coverage
+/.coverage.*
+/htmlcov/
+/test-results/
+/pytest-report.xml
 build/
 dist/
 tmp/
@@ -33,3 +42,14 @@ group-review*.metadata.json
 
 # Synthetic parser inputs remain part of the reproducible example corpus.
 !data/raw/examples/**/*.html
+
+# Keep grouping experiment tests runnable in the local checkout.
+/tests/test_automatic_grouping.py
+/tests/test_event_grouping.py
+/tests/test_group_*.py
+/tests/test_grouping_*.py
+
+# Record grouping outcomes in reports/Tổng hợp grouping.md.
+/reports/validation-*-grouping*.md
+/reports/validation-*-group-*.md
+/reports/validation-*-singleton-approval.md
