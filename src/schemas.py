@@ -284,7 +284,7 @@ class GroupingModelMention(Record):
 class GroupingLinearModel(Record):
     """Store a fitted binary logistic regression with ordered feature scaling."""
 
-    kind: Literal["grouping-logistic-v1"] = "grouping-logistic-v1"
+    kind: Literal["grouping-logistic-v1", "grouping-logistic-v2"] = "grouping-logistic-v1"
     features: list[str] = Field(min_length=1)
     mean: list[float]
     scale: list[float]

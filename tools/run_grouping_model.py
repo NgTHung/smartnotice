@@ -4,9 +4,12 @@ import argparse
 import hashlib
 import json
 import platform
+from dataclasses import asdict
 from pathlib import Path
 
 from smartnotice.io import read_jsonl, write_jsonl
+from smartnotice.labeling.grouping_evidence import compare_pair_evidence, evidence_decision
+from smartnotice.labeling.grouping_followup import followup_evidence, load_email_routing
 from smartnotice.labeling.grouping_model import (
     LEXICAL_THRESHOLD,
     fit_grouping_classifier,
@@ -23,6 +26,7 @@ from smartnotice.schemas import (
 )
 
 LABELS = {"SAME_EVENT": True, "UPDATE_OF": True, "DIFFERENT_EVENT": False, "UNCLEAR": None}
+KINDS = {"baseline": "grouping-logistic-v1", "evidence": "grouping-logistic-v2"}
 
 
 def _sha(path):
@@ -40,7 +44,17 @@ def _index(rows, field):
     return indexed
 
 
-def _load_cases(pairs_path, mentions_path, notices_path, assignments_path, split):
+def _load_cases(
+    pairs_path,
+    mentions_path,
+    notices_path,
+    assignments_path,
+    split,
+    kind,
+    *,
+    fitting=True,
+    raw_email_dir=None,
+):
     assignments = {
         key: GroupFoldAssignment.model_validate(row)
         for key, row in _index(read_jsonl(assignments_path), "doc_id").items()
@@ -60,6 +74,14 @@ def _load_cases(pairs_path, mentions_path, notices_path, assignments_path, split
         mentions[key] = mention
     cases = []
     seen = set()
+    headers = (
+        {
+            key: load_email_routing(notices[key], raw_email_dir)
+            for key in {mention.doc_id for mention in mentions.values()}
+        }
+        if raw_email_dir is not None
+        else {}
+    )
     for rid, row in _index(read_jsonl(pairs_path), "review_id").items():
         if row["decision"] not in LABELS:
             raise ValueError(f"Unsupported decision for {rid}")
@@ -70,15 +92,31 @@ def _load_cases(pairs_path, mentions_path, notices_path, assignments_path, split
         seen.add(key)
         a, b = assignments[left.doc_id], assignments[right.doc_id]
         label = LABELS[row["decision"]]
-        if split == "train":
+        if fitting:
             if a.fold is None or b.fold is None or label is None:
                 raise ValueError(f"Missing train fold or label for {rid}")
             if (row["left_fold"], row["right_fold"], row["same_event"]) != (a.fold, b.fold, label):
                 raise ValueError(f"Train metadata does not match the frozen release for {rid}")
             if label and a.fold != b.fold:
                 raise ValueError(f"Positive training example crosses folds for {rid}")
-        elif a.fold is not None or b.fold is not None:
-            raise ValueError(f"Test document belongs to a training fold for {rid}")
+        elif split != "train" and (a.fold is not None or b.fold is not None):
+            raise ValueError(f"Evaluation document belongs to a training fold for {rid}")
+        features = pair_features(left, right)
+        evidence = None
+        followup = None
+        if kind == KINDS["evidence"]:
+            evidence = compare_pair_evidence(
+                left, right, notices[left.doc_id], notices[right.doc_id]
+            )
+            features += evidence.features
+            if raw_email_dir is not None:
+                followup = followup_evidence(
+                    left,
+                    right,
+                    (notices[left.doc_id], notices[right.doc_id]),
+                    (headers[left.doc_id], headers[right.doc_id]),
+                    evidence,
+                )
         cases.append(
             {
                 "review_id": rid,
@@ -87,15 +125,17 @@ def _load_cases(pairs_path, mentions_path, notices_path, assignments_path, split
                 "label": label,
                 "folds": [a.fold, b.fold],
                 "groups": [a.group_id, b.group_id],
-                "features": pair_features(left, right),
+                "features": features,
+                "evidence": evidence,
+                "followup": followup,
             }
         )
     return cases
 
 
-def _fit(cases, seed):
+def _fit(cases, seed, kind):
     return fit_grouping_classifier(
-        [c["features"] for c in cases], [c["label"] for c in cases], seed=seed
+        [c["features"] for c in cases], [c["label"] for c in cases], seed=seed, kind=kind
     )
 
 
@@ -103,19 +143,31 @@ def _predict(model, cases, fold=None):
     rows = []
     for case in cases:
         score = grouping_probability(model, case["features"])
-        rows.append(
-            {
-                "review_id": case["review_id"],
-                "left": case["left"],
-                "right": case["right"],
-                "validation_fold": fold,
-                "same_event": case["label"],
-                "grouping_score": score,
-                "logistic_regression": score >= model.threshold,
-                "lexical_baseline": case["features"][0] >= LEXICAL_THRESHOLD,
-                "always_different": False,
-            }
-        )
+        row = {
+            "review_id": case["review_id"],
+            "left": case["left"],
+            "right": case["right"],
+            "validation_fold": fold,
+            "same_event": case["label"],
+            "grouping_score": score,
+            "logistic_regression": score >= model.threshold,
+            "lexical_baseline": case["features"][0] >= LEXICAL_THRESHOLD,
+            "always_different": False,
+        }
+        if case["evidence"] is not None:
+            evidence = case["evidence"]
+            status = evidence_decision(score, model.threshold, evidence)
+            row["ungated_logistic"] = row["logistic_regression"]
+            row["logistic_regression"] = status == "SAME_EVENT"
+            row["decision"] = status
+            row["anchor"] = evidence.anchor
+        if case["followup"] is not None:
+            followup = case["followup"]
+            row["followup_title"] = row["logistic_regression"] or followup.title
+            row["followup_reference"] = row["logistic_regression"] or followup.reference
+            row["followup_combined"] = row["logistic_regression"] or followup.joint
+            row["followup_evidence"] = asdict(followup)
+        rows.append(row)
     return rows
 
 
@@ -136,7 +188,21 @@ def _metrics(predictions):
         "positive": sum(labels),
         "unresolved": len(predictions) - len(labels),
     }
-    for column in ("logistic_regression", "lexical_baseline", "always_different"):
+    columns = ["logistic_regression", "lexical_baseline", "always_different"]
+    if predictions and "ungated_logistic" in predictions[0]:
+        columns.append("ungated_logistic")
+        result["evidence_policy"] = {
+            "decided": sum(p["decision"] != "UNCLEAR" for p in scored),
+            "withheld_labeled_positive": sum(
+                p["decision"] == "UNCLEAR" and p["same_event"] for p in scored
+            ),
+            "withheld_labeled_negative": sum(
+                p["decision"] == "UNCLEAR" and not p["same_event"] for p in scored
+            ),
+        }
+    if predictions and "followup_combined" in predictions[0]:
+        columns.extend(("followup_title", "followup_reference", "followup_combined"))
+    for column in columns:
         observed = [p[column] for p in scored]
         both = set(labels) == {False, True}
         result[column] = {
@@ -155,7 +221,8 @@ def _metrics(predictions):
             if labels
             else [[0, 0], [0, 0]],
         }
-    result["logistic_regression"]["average_precision"] = (
+    ranking = "ungated_logistic" if "ungated_logistic" in columns else "logistic_regression"
+    result[ranking]["average_precision"] = (
         average_precision_score(labels, [p["grouping_score"] for p in scored])
         if set(labels) == {False, True}
         else None
@@ -171,7 +238,8 @@ def _train(args):
     for file in files:
         if _sha(file) != checksums.get(file.relative_to(dataset).as_posix()):
             raise ValueError(f"Training dataset checksum mismatch: {file.name}")
-    cases = _load_cases(*files, "train")
+    kind = KINDS[args.variant]
+    cases = _load_cases(*files, "train", kind)
     folds = sorted({f for c in cases for f in c["folds"]})
     predictions = []
     counts = []
@@ -182,7 +250,7 @@ def _train(args):
         valid_groups = {group for c in validation for group in c["groups"]}
         if fit_groups & valid_groups:
             raise ValueError(f"Evaluation groups overlap in fold {i}")
-        model = _fit(fit, args.seed)
+        model = _fit(fit, args.seed, kind)
         forecasts = _predict(model, validation, i)
         predictions.extend(forecasts)
         counts.append(
@@ -195,6 +263,7 @@ def _train(args):
         )
     summary = {
         "kind": "grouping_training_development_cv",
+        "model_kind": kind,
         "seed": args.seed,
         "optimizer": {"C": 1.0, "solver": "lbfgs", "max_iter": 1000},
         "lexical_threshold": LEXICAL_THRESHOLD,
@@ -202,7 +271,7 @@ def _train(args):
         "out_of_fold": _metrics(predictions),
         "folds": counts,
     }
-    return summary, predictions, _fit(cases, args.seed), [*files, dataset / "checksums.json"]
+    return summary, predictions, _fit(cases, args.seed, kind), [*files, dataset / "checksums.json"]
 
 
 def _evaluate(args):
@@ -212,7 +281,6 @@ def _evaluate(args):
         args.test_notices,
         args.dataset / "fold_assignments.jsonl",
     ]
-    cases = _load_cases(*files, "test")
     checkpoint = args.model_dir / "model.json"
     training = json.loads((args.model_dir / "run.json").read_bytes())
     if training["model_sha256"] != _sha(checkpoint):
@@ -220,9 +288,33 @@ def _evaluate(args):
     if training["inputs_sha256"].get(files[3].as_posix()) != _sha(files[3]):
         raise ValueError("Holdout and model use different frozen assignments")
     model = GroupingLinearModel.model_validate_json(checkpoint.read_bytes())
+    if args.raw_email_dir is not None and model.kind != KINDS["evidence"]:
+        raise ValueError("Follow-up evaluation requires an evidence checkpoint")
+    cases = _load_cases(
+        *files,
+        args.evaluation_split,
+        model.kind,
+        fitting=False,
+        raw_email_dir=args.raw_email_dir,
+    )
+    if args.evaluation_split == "train":
+        train_pairs = args.dataset / "train/pairs.jsonl"
+        if training["inputs_sha256"].get(train_pairs.as_posix()) != _sha(train_pairs):
+            raise ValueError("Challenge and model use different fitting pairs")
+        assignments = _index(read_jsonl(files[3]), "doc_id")
+        train_groups = {
+            assignments[r[f"{side}_doc_id"]]["group_id"]
+            for r in read_jsonl(train_pairs)
+            for side in ("left", "right")
+        }
+        if any(train_groups.intersection(case["groups"]) for case in cases):
+            raise ValueError("Challenge pairs share a frozen group with fitting examples")
+        files.append(train_pairs)
     predictions = _predict(model, cases)
     summary = {
         "kind": "grouping_assistant_reviewed_email_holdout",
+        "model_kind": model.kind,
+        "evaluation_split": args.evaluation_split,
         "metrics": _metrics(predictions),
         "independent_human_gold": False,
         "sampling_record": str(args.reviewed_holdout / "selection.json"),
@@ -247,15 +339,22 @@ def main() -> None:
     cli = argparse.ArgumentParser(description=__doc__)
     sub = cli.add_subparsers(dest="command", required=True)
     train = sub.add_parser("train")
+    train.add_argument("--variant", choices=KINDS, default="baseline")
     train.add_argument("--seed", type=int, default=DEFAULT_SEED)
     evaluate = sub.add_parser("evaluate")
     evaluate.add_argument("--reviewed-holdout", type=Path, required=True)
     evaluate.add_argument("--test-notices", type=Path, required=True)
+    evaluate.add_argument(
+        "--evaluation-split", choices=("test", "validation", "train"), default="test"
+    )
+    evaluate.add_argument("--raw-email-dir", type=Path)
     evaluate.add_argument("--model-dir", type=Path, required=True)
     for command in (train, evaluate):
         command.add_argument("--dataset", type=Path, required=True)
         command.add_argument("--output-dir", type=Path, required=True)
     args = cli.parse_args()
+    if args.command == "evaluate" and args.raw_email_dir and not args.raw_email_dir.is_dir():
+        cli.error("The raw email directory does not exist")
     output = args.output_dir.resolve()
     root = Path("reports/generated").resolve()
     if output == root or not output.is_relative_to(root) or output.exists():
@@ -271,6 +370,9 @@ def main() -> None:
                 *sources,
                 Path(__file__),
                 Path("src/labeling/grouping_model.py"),
+                Path("src/labeling/grouping_evidence.py"),
+                Path("src/labeling/grouping_followup.py"),
+                Path("src/parsers/email.py"),
                 Path("uv.lock"),
             ]
         },

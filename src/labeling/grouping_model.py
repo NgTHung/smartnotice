@@ -4,7 +4,9 @@ import hashlib
 import math
 import re
 import unicodedata
+from typing import Literal
 
+from smartnotice.labeling.grouping_evidence import EVIDENCE_FEATURES
 from smartnotice.schemas import GroupingLinearModel, GroupingModelMention, Notice
 
 FEATURES = (
@@ -15,6 +17,11 @@ FEATURES = (
     "disjoint_dates_same_role",
     "shared_visible_link",
 )
+MODEL_FEATURES = {
+    "grouping-logistic-v1": FEATURES,
+    "grouping-logistic-v2": FEATURES + EVIDENCE_FEATURES,
+}
+ModelKind = Literal["grouping-logistic-v1", "grouping-logistic-v2"]
 LEXICAL_THRESHOLD = 0.5
 URL = re.compile(r"https?://[^\s<>]+|www\.[^\s<>]+", re.IGNORECASE)
 PLACEHOLDER = re.compile(r"\[[A-Z][A-Z_0-9]*\]")
@@ -95,7 +102,11 @@ def pair_features(left: GroupingModelMention, right: GroupingModelMention) -> tu
 
 
 def fit_grouping_classifier(
-    features: list[tuple[float, ...]], labels: list[bool], *, seed: int
+    features: list[tuple[float, ...]],
+    labels: list[bool],
+    *,
+    seed: int,
+    kind: ModelKind = "grouping-logistic-v1",
 ) -> GroupingLinearModel:
     """Fit scaling and L2 logistic regression on the supplied examples only."""
     from sklearn.linear_model import LogisticRegression
@@ -103,12 +114,16 @@ def fit_grouping_classifier(
 
     if len(features) != len(labels) or set(labels) != {True, False}:
         raise ValueError("Grouping training requires aligned features and both classes")
+    feature_names = MODEL_FEATURES[kind]
+    if any(len(row) != len(feature_names) for row in features):
+        raise ValueError("Grouping training feature version mismatch")
     scaler = StandardScaler()
     scaled = scaler.fit_transform(features)
     classifier = LogisticRegression(C=1.0, solver="lbfgs", max_iter=1000, random_state=seed)
     classifier.fit(scaled, labels)
     return GroupingLinearModel(
-        features=list(FEATURES),
+        kind=kind,
+        features=list(feature_names),
         mean=scaler.mean_.tolist(),
         scale=scaler.scale_.tolist(),
         weights=classifier.coef_[0].tolist(),
@@ -118,7 +133,8 @@ def fit_grouping_classifier(
 
 def grouping_probability(model: GroupingLinearModel, features: tuple[float, ...]) -> float:
     """Return the fitted probability of shared event identity for one pair."""
-    if tuple(model.features) != FEATURES or len(features) != len(FEATURES):
+    expected = MODEL_FEATURES[model.kind]
+    if tuple(model.features) != expected or len(features) != len(expected):
         raise ValueError("Grouping model feature version mismatch")
     value = model.intercept + sum(
         weight * (feature - mean) / scale

@@ -2,11 +2,12 @@
 
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 
+from smartnotice.parsers.addresses import normalize_email
 from smartnotice.parsers.boilerplate import remove_boilerplate
 from smartnotice.parsers.mime import extract_content
 from smartnotice.parsers.thread import split_thread
@@ -29,6 +30,53 @@ class ParsedEmail:
     thread_key: str | None = field(repr=False)
     identities: list[tuple[str, str]] = field(repr=False)
     warnings: list[str]
+
+
+@dataclass(frozen=True, repr=False)
+class EmailRouting:
+    """Keep private source header fields in memory for source comparisons."""
+
+    sent_at: datetime | None
+    sender: str | None
+    message_id: str | None
+    parent_id: str | None
+
+
+def parse_email_routing(raw: bytes) -> EmailRouting:
+    """Read the outer email headers for an in-memory comparison.
+
+    Require a timezone for minute comparisons and a single From mailbox.
+    Prefer an unambiguous In-Reply-To, then the last References ID. Callers
+    must export only derived pair facts, never these header fields.
+    """
+    message = BytesParser(policy=policy.default).parsebytes(raw, headersonly=True)
+    date_headers = message.get_all("Date", [])
+    sent_at = None
+    if len(date_headers) == 1:
+        try:
+            observed = parsedate_to_datetime(str(date_headers[0]))
+            if observed.utcoffset() is not None:
+                sent_at = observed.astimezone(UTC)
+        except (ValueError, TypeError, OverflowError):
+            pass
+    from_headers = message.get_all("From", [])
+    addresses = getattr(from_headers[0], "addresses", ()) if len(from_headers) == 1 else ()
+    sender = None
+    if len(addresses) == 1 and addresses[0].username and addresses[0].domain:
+        sender = normalize_email(addresses[0].addr_spec)
+
+    def ids(name: str) -> list[str]:
+        return re.findall(r"<[^<>\s]+@[^<>\s]+>", " ".join(map(str, message.get_all(name, []))))
+
+    message_ids = ids("Message-ID")
+    in_reply_to = ids("In-Reply-To")
+    references = ids("References") if "In-Reply-To" not in message else []
+    return EmailRouting(
+        sent_at,
+        sender,
+        message_ids[0] if len(message_ids) == 1 else None,
+        in_reply_to[0] if len(in_reply_to) == 1 else (references[-1] if references else None),
+    )
 
 
 def parse_email(raw: bytes) -> tuple[str, date | None, str | None]:
