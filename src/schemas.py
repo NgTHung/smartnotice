@@ -497,7 +497,7 @@ class AutomaticGroupingConfig(Record):
 class AutomaticPairProposal(Record):
     """Keep an automatic pair decision separate from supplied review labels."""
 
-    origin: Literal["rule_proposal"] = "rule_proposal"
+    origin: Literal["rule_proposal", "model_assisted_rule_proposal"] = "rule_proposal"
     candidate_reasons: list[str] = Field(min_length=1)
     reasons: list[str] = Field(min_length=1)
     lexical_similarity: float = Field(ge=0, le=1)
@@ -505,7 +505,7 @@ class AutomaticPairProposal(Record):
 
     @model_validator(mode="after")
     def check_origin(self):
-        """Prevent a rule proposal from asserting human review authorship."""
+        """Prevent an automatic proposal from asserting human review authorship."""
         if self.pair.author.reviewer_kind != "ai_assistant":
             raise ValueError("Automatic proposals require nonhuman attribution")
         return self
@@ -514,7 +514,9 @@ class AutomaticPairProposal(Record):
 class AutomaticGroupingResult(Record):
     """Exchange rule proposals and their provisional assembled groups."""
 
-    rule_version: Literal["automatic-event-grouping-v1"] = "automatic-event-grouping-v1"
+    rule_version: Literal[
+        "automatic-event-grouping-v1", "automatic-event-grouping-model-assisted-v1"
+    ] = "automatic-event-grouping-v1"
     config: AutomaticGroupingConfig
     generated_at: datetime
     compared_pairs: int = Field(ge=0)
@@ -523,9 +525,16 @@ class AutomaticGroupingResult(Record):
 
     @model_validator(mode="after")
     def check_generation_time(self):
-        """Reject generation times without a recorded timezone."""
+        """Require a generation timezone and pair origins matching the rule version."""
         if self.generated_at.utcoffset() is None:
             raise ValueError("Generation time requires a timezone")
+        origin = (
+            "rule_proposal"
+            if self.rule_version == "automatic-event-grouping-v1"
+            else "model_assisted_rule_proposal"
+        )
+        if any(proposal.origin != origin for proposal in self.proposals):
+            raise ValueError("Automatic proposal origin does not match the rule version")
         return self
 
 

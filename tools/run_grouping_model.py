@@ -8,8 +8,13 @@ from dataclasses import asdict
 from pathlib import Path
 
 from smartnotice.io import read_jsonl, write_jsonl
+from smartnotice.labeling.grouping_academic import academic_scope, apply_academic_scope
 from smartnotice.labeling.grouping_evidence import compare_pair_evidence, evidence_decision
-from smartnotice.labeling.grouping_followup import followup_evidence, load_email_routing
+from smartnotice.labeling.grouping_followup import (
+    followup_evidence,
+    load_email_routing,
+    resolve_followup,
+)
 from smartnotice.labeling.grouping_model import (
     LEXICAL_THRESHOLD,
     fit_grouping_classifier,
@@ -54,6 +59,8 @@ def _load_cases(
     *,
     fitting=True,
     raw_email_dir=None,
+    use_academic_scope=False,
+    resolve_relations=False,
 ):
     assignments = {
         key: GroupFoldAssignment.model_validate(row)
@@ -82,6 +89,14 @@ def _load_cases(
         if raw_email_dir is not None
         else {}
     )
+    scoped = (
+        {
+            key: academic_scope(m, notices[m.doc_id], headers.get(m.doc_id))
+            for key, m in mentions.items()
+        }
+        if use_academic_scope
+        else {}
+    )
     for rid, row in _index(read_jsonl(pairs_path), "review_id").items():
         if row["decision"] not in LABELS:
             raise ValueError(f"Unsupported decision for {rid}")
@@ -92,9 +107,18 @@ def _load_cases(
         seen.add(key)
         a, b = assignments[left.doc_id], assignments[right.doc_id]
         label = LABELS[row["decision"]]
+        update_side = row.get("update_side")
+        if update_side is not None and (
+            type(update_side) is not int
+            or update_side not in (0, 1)
+            or row["decision"] != "UPDATE_OF"
+        ):
+            raise ValueError(f"Invalid update direction for {rid}")
         if fitting:
             if a.fold is None or b.fold is None or label is None:
                 raise ValueError(f"Missing train fold or label for {rid}")
+            if (row["left_doc_id"], row["right_doc_id"]) != (left.doc_id, right.doc_id):
+                raise ValueError(f"Train document IDs differ from their source mentions for {rid}")
             if (row["left_fold"], row["right_fold"], row["same_event"]) != (a.fold, b.fold, label):
                 raise ValueError(f"Train metadata does not match the frozen release for {rid}")
             if label and a.fold != b.fold:
@@ -125,9 +149,18 @@ def _load_cases(
                 "label": label,
                 "folds": [a.fold, b.fold],
                 "groups": [a.group_id, b.group_id],
+                "fold_groups": [a.fold_group_id, b.fold_group_id],
                 "features": features,
                 "evidence": evidence,
                 "followup": followup,
+                "academic_scopes": (scoped[left.mention_id], scoped[right.mention_id])
+                if scoped
+                else None,
+                "relation_inputs": (left, right, (notices[left.doc_id], notices[right.doc_id]))
+                if resolve_relations
+                else None,
+                "reference_relation": (row["decision"], update_side) if resolve_relations else None,
+                "stratum": row.get("stratum", "unspecified"),
             }
         )
     return cases
@@ -167,6 +200,35 @@ def _predict(model, cases, fold=None):
             row["followup_reference"] = row["logistic_regression"] or followup.reference
             row["followup_combined"] = row["logistic_regression"] or followup.joint
             row["followup_evidence"] = asdict(followup)
+            if case["academic_scopes"] is not None:
+                base = "SAME_EVENT" if row["followup_combined"] else row["decision"]
+                refined = apply_academic_scope(*case["academic_scopes"], followup.routing, base)
+                row["academic_scope"] = refined.decision in ("SAME_EVENT", "UPDATE_OF")
+                row["academic_decision"] = asdict(refined)
+            if case["relation_inputs"] is not None:
+                base = "SAME_EVENT" if row["followup_combined"] else row["decision"]
+                relation = resolve_followup(*case["relation_inputs"], evidence, followup, base)
+                decision = relation.decision
+                scope_reason = None
+                if case["academic_scopes"] is not None:
+                    scoped = apply_academic_scope(
+                        *case["academic_scopes"],
+                        followup.routing,
+                        "SAME_EVENT" if decision == "UPDATE_OF" else decision,
+                    )
+                    qualified_change = (
+                        decision == "UPDATE_OF" and scoped.reason == "different_dates_same_role"
+                    )
+                    if scoped.decision in ("DIFFERENT_EVENT", "UNCLEAR") and not qualified_change:
+                        decision = scoped.decision
+                        if scoped.reason != "base":
+                            scope_reason = scoped.reason
+                row["resolved_followup"] = decision in ("SAME_EVENT", "UPDATE_OF")
+                row["followup_relation"] = {"evidence": asdict(relation), "decision": decision}
+                if scope_reason is not None:
+                    row["followup_relation"]["scope_reason"] = scope_reason
+                row["reference_decision"], row["reference_update_side"] = case["reference_relation"]
+                row["stratum"] = case["stratum"]
         rows.append(row)
     return rows
 
@@ -202,6 +264,41 @@ def _metrics(predictions):
         }
     if predictions and "followup_combined" in predictions[0]:
         columns.extend(("followup_title", "followup_reference", "followup_combined"))
+    if predictions and "academic_scope" in predictions[0]:
+        columns.append("academic_scope")
+        result["academic_review"] = {
+            "unclear_labeled_positive": sum(
+                p["academic_decision"]["decision"] == "UNCLEAR" and p["same_event"] for p in scored
+            ),
+            "unclear_labeled_negative": sum(
+                p["academic_decision"]["decision"] == "UNCLEAR" and not p["same_event"]
+                for p in scored
+            ),
+        }
+    if predictions and "resolved_followup" in predictions[0]:
+        columns.append("resolved_followup")
+        updates = [p for p in predictions if p["reference_decision"] == "UPDATE_OF"]
+        result["followup_relation"] = {
+            "exact_labels": sum(
+                p["followup_relation"]["decision"] == p["reference_decision"] for p in predictions
+            ),
+            "reference_updates": len(updates),
+            "predicted_updates": sum(
+                p["followup_relation"]["decision"] == "UPDATE_OF" for p in predictions
+            ),
+            "correct_update_labels": sum(
+                p["followup_relation"]["decision"] == "UPDATE_OF" for p in updates
+            ),
+            "reference_directed_updates": sum(
+                p["reference_update_side"] in (0, 1) for p in updates
+            ),
+            "correct_directed_updates": sum(
+                p["followup_relation"]["decision"] == "UPDATE_OF"
+                and p["reference_update_side"] in (0, 1)
+                and p["followup_relation"]["evidence"]["update_side"] == p["reference_update_side"]
+                for p in updates
+            ),
+        }
     for column in columns:
         observed = [p[column] for p in scored]
         both = set(labels) == {False, True}
@@ -248,7 +345,9 @@ def _train(args):
         validation = [c for c in cases if c["folds"] == [i, i]]
         fit_groups = {group for c in fit for group in c["groups"]}
         valid_groups = {group for c in validation for group in c["groups"]}
-        if fit_groups & valid_groups:
+        fit_components = {group for c in fit for group in c["fold_groups"]}
+        valid_components = {group for c in validation for group in c["fold_groups"]}
+        if fit_groups & valid_groups or fit_components & valid_components:
             raise ValueError(f"Evaluation groups overlap in fold {i}")
         model = _fit(fit, args.seed, kind)
         forecasts = _predict(model, validation, i)
@@ -296,18 +395,24 @@ def _evaluate(args):
         model.kind,
         fitting=False,
         raw_email_dir=args.raw_email_dir,
+        use_academic_scope=args.academic_scope,
+        resolve_relations=args.resolve_followup,
     )
     if args.evaluation_split == "train":
         train_pairs = args.dataset / "train/pairs.jsonl"
         if training["inputs_sha256"].get(train_pairs.as_posix()) != _sha(train_pairs):
             raise ValueError("Challenge and model use different fitting pairs")
         assignments = _index(read_jsonl(files[3]), "doc_id")
-        train_groups = {
-            assignments[r[f"{side}_doc_id"]]["group_id"]
-            for r in read_jsonl(train_pairs)
-            for side in ("left", "right")
+        train_docs = {
+            r[f"{side}_doc_id"] for r in read_jsonl(train_pairs) for side in ("left", "right")
         }
-        if any(train_groups.intersection(case["groups"]) for case in cases):
+        train_groups = {assignments[did]["group_id"] for did in train_docs}
+        train_components = {assignments[did]["fold_group_id"] for did in train_docs}
+        if any(
+            train_groups.intersection(case["groups"])
+            or train_components.intersection(case["fold_groups"])
+            for case in cases
+        ):
             raise ValueError("Challenge pairs share a frozen group with fitting examples")
         files.append(train_pairs)
     predictions = _predict(model, cases)
@@ -348,6 +453,8 @@ def main() -> None:
         "--evaluation-split", choices=("test", "validation", "train"), default="test"
     )
     evaluate.add_argument("--raw-email-dir", type=Path)
+    evaluate.add_argument("--academic-scope", action="store_true")
+    evaluate.add_argument("--resolve-followup", action="store_true")
     evaluate.add_argument("--model-dir", type=Path, required=True)
     for command in (train, evaluate):
         command.add_argument("--dataset", type=Path, required=True)
@@ -355,6 +462,9 @@ def main() -> None:
     args = cli.parse_args()
     if args.command == "evaluate" and args.raw_email_dir and not args.raw_email_dir.is_dir():
         cli.error("The raw email directory does not exist")
+    if args.command == "evaluate" and args.raw_email_dir is None:
+        if args.academic_scope or args.resolve_followup:
+            cli.error("Academic-scope and follow-up relation comparisons require --raw-email-dir")
     output = args.output_dir.resolve()
     root = Path("reports/generated").resolve()
     if output == root or not output.is_relative_to(root) or output.exists():
@@ -371,6 +481,7 @@ def main() -> None:
                 Path(__file__),
                 Path("src/labeling/grouping_model.py"),
                 Path("src/labeling/grouping_evidence.py"),
+                Path("src/labeling/grouping_academic.py"),
                 Path("src/labeling/grouping_followup.py"),
                 Path("src/parsers/email.py"),
                 Path("uv.lock"),

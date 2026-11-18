@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from urllib.parse import urlsplit
 
-from smartnotice.schemas import GroupingModelMention, Notice
+from smartnotice.schemas import GroupingModelMention, Notice, Sentence
 
 _URL = re.compile(r"https?://[^\s<>\[\]]+", re.I)
 _MASK = re.compile(r"\[[A-Z][A-Z_0-9]*\]")
@@ -58,8 +58,8 @@ class PairEvidence:
     conflict: bool
 
 
-def mention_context(mention: GroupingModelMention, notice: Notice) -> str:
-    """Return nearby prepared evidence without crossing a numbered item boundary."""
+def mention_context_sentences(mention: GroupingModelMention, notice: Notice) -> list[Sentence]:
+    """Return nearby prepared sentences with original offsets in source order."""
     ids = {s.sentence_id for s in mention.sentences}
     indices = [i for i, s in enumerate(notice.sentences) if s.sentence_id in ids]
     selected = set(indices)
@@ -70,9 +70,13 @@ def mention_context(mention: GroupingModelMention, notice: Notice) -> str:
                 break
         if i + 1 < len(notice.sentences) and not _NUMBERED.match(notice.sentences[i + 1].text):
             selected.add(i + 1)
-    return unicodedata.normalize(
-        "NFC", "\n".join(notice.sentences[i].text for i in sorted(selected))
-    ).replace("*", "")
+    return [notice.sentences[i] for i in sorted(selected)]
+
+
+def mention_context(mention: GroupingModelMention, notice: Notice) -> str:
+    """Return nearby prepared evidence without crossing a numbered item boundary."""
+    text = "\n".join(sentence.text for sentence in mention_context_sentences(mention, notice))
+    return unicodedata.normalize("NFC", text).replace("*", "")
 
 
 def _tokens(text: str) -> list[str]:
@@ -92,6 +96,14 @@ def _calendar(text: str) -> set[date]:
         except ValueError:
             continue
     return result
+
+
+def single_calendar_date(text: str) -> date | None:
+    """Return a single valid full date in prepared text without inferring a year."""
+    matches = list(_DATE.finditer(text))
+    if len(matches) != 1:
+        return None
+    return next(iter(_calendar(text)), None)
 
 
 def event_form_keys(text: str) -> set[str]:

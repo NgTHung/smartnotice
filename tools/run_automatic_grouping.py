@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from smartnotice.schemas import (
     Annotation,
     AutomaticGroupingConfig,
     EventGroupAssembly,
+    GroupingLinearModel,
     Notice,
     TimeBoundaryReview,
 )
@@ -47,6 +49,7 @@ def main() -> None:
 
     Accept canonical annotations or a complete batch of saved model predictions.
     Preserve model authorship and retain empty annotations in the output snapshot.
+    An evidence checkpoint can assist pair proposals using local source evidence.
     A reference assembly is read only for diagnostics after proposals are built.
     No approval is inherited by new groups, even when membership matches. Source
     text, saved reviews, previous HTML and evaluation splits remain unchanged.
@@ -59,10 +62,16 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--time-boundaries", type=Path)
     parser.add_argument("--reference-assembly", type=Path)
+    parser.add_argument("--checkpoint", type=Path, help="Optional grouping-logistic-v2 checkpoint")
+    parser.add_argument("--raw-email-dir", type=Path, help="Local hash-named email source files")
     parser.add_argument("--generated-at", type=datetime.fromisoformat)
     parser.add_argument("--candidate-similarity", type=float, default=0.35)
     parser.add_argument("--min-shared-tokens", type=int, default=3)
     args = parser.parse_args()
+    if args.raw_email_dir is not None and args.checkpoint is None:
+        parser.error("--raw-email-dir requires --checkpoint")
+    if args.raw_email_dir is not None and not args.raw_email_dir.is_dir():
+        parser.error("--raw-email-dir must be an existing directory")
     root, output = Path.cwd().resolve(), args.output_dir.resolve()
     if not any(output.is_relative_to(root / p) for p in ["data/processed", "reports/generated"]):
         raise ValueError("Output must stay in data/processed or reports/generated")
@@ -70,7 +79,7 @@ def main() -> None:
         raise ValueError("Output already exists; choose a new directory")
     template = Path(__file__).parent / "templates/group_review.html.template"
     inputs = [args.notices, args.annotations or args.predictions]
-    inputs += [p for p in [args.time_boundaries, args.reference_assembly] if p]
+    inputs += [p for p in [args.time_boundaries, args.reference_assembly, args.checkpoint] if p]
     code = [
         Path(__file__),
         Path("src/labeling/automatic_grouping.py"),
@@ -83,7 +92,23 @@ def main() -> None:
         Path("uv.lock"),
         template,
     ]
+    if args.checkpoint is not None:
+        code.extend(
+            [
+                Path("src/labeling/grouping_academic.py"),
+                Path("src/labeling/grouping_evidence.py"),
+                Path("src/labeling/grouping_followup.py"),
+                Path("src/labeling/grouping_model.py"),
+                Path("src/parsers/addresses.py"),
+                Path("src/parsers/email.py"),
+            ]
+        )
     before = {p.as_posix(): _sha(p) for p in inputs + code}
+    checkpoint = (
+        GroupingLinearModel.model_validate_json(args.checkpoint.read_bytes())
+        if args.checkpoint is not None
+        else None
+    )
     notices = _read(args.notices, Notice)
     if args.predictions:
         try:
@@ -97,6 +122,18 @@ def main() -> None:
             raise ValueError("Saved predictions must cover exactly the supplied Notice documents")
     else:
         annotations = _read(args.annotations, Annotation)
+    raw_hashes = set()
+    if args.raw_email_dir is not None:
+        used_docs = {label.doc_id for label in annotations if label.events}
+        raw_hashes = {
+            notice.raw_sha256
+            for notice in notices
+            if notice.doc_id in used_docs
+            and notice.source_type == "email"
+            and re.fullmatch(r"[a-f0-9]{64}", notice.raw_sha256)
+        }
+    raw_files = {digest: args.raw_email_dir / f"{digest}.eml" for digest in raw_hashes}
+    raw_available = {digest for digest, path in raw_files.items() if path.is_file()}
     result = propose_event_groups(
         notices,
         annotations,
@@ -107,6 +144,8 @@ def main() -> None:
         time_boundaries=_read(args.time_boundaries, TimeBoundaryReview)
         if args.time_boundaries
         else None,
+        checkpoint=checkpoint,
+        raw_email_dir=args.raw_email_dir,
     )
     comparison = None
     if args.reference_assembly:
@@ -115,6 +154,10 @@ def main() -> None:
     html = render_group_review(result.assembly, notices, template.read_text(encoding="utf-8"))
     if any(_sha(p) != before[p.as_posix()] for p in inputs + code):
         raise ValueError("Input or implementation changed during the run")
+    if raw_available != {digest for digest, path in raw_files.items() if path.is_file()} or any(
+        _sha(raw_files[digest]) != digest for digest in raw_available
+    ):
+        raise ValueError("Local email sources changed during the run")
     counts = {
         "documents": len(notices),
         "annotation_documents": len(annotations),
@@ -156,6 +199,16 @@ def main() -> None:
         "split_assignments_changed": False,
         "reference_used_for_prediction": False,
     }
+    if checkpoint is not None:
+        run["checkpoint"] = {
+            "kind": checkpoint.kind,
+            "threshold": checkpoint.threshold,
+            "local_raw_email_requested": args.raw_email_dir is not None,
+            "verified_email_source_hashes": sorted(raw_available),
+        }
+        run["label_origin"] = run["label_origin"].replace(
+            "rule_proposals", "model_assisted_rule_proposals"
+        )
     output.mkdir(parents=True)
     write_jsonl(output / "annotations.jsonl", [a.model_dump(mode="json") for a in annotations])
     _dump(output / "result.json", result.model_dump(mode="json"))

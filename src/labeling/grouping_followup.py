@@ -4,9 +4,16 @@ import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
+from typing import Literal
 
-from smartnotice.labeling.grouping_evidence import PairEvidence, event_form_keys, mention_context
+from smartnotice.labeling.grouping_evidence import (
+    PairEvidence,
+    event_form_keys,
+    mention_context,
+    single_calendar_date,
+)
 from smartnotice.parsers.email import EmailRouting, parse_email_routing
 from smartnotice.schemas import GroupingModelMention, Notice
 
@@ -39,6 +46,31 @@ _ARTICLE = re.compile(
 _PRIOR_NOTICE = re.compile(
     r"\b(?:thư|email|thông báo|biểu mẫu|bản) (?:gốc|trước|cũ|vừa gửi|đã gửi)\b", re.I
 )
+_EXTEND = re.compile(r"\b(?:gia hạn|kéo dài (?:hạn|thời hạn))\b", re.I)
+_EXTENSION_REQUEST = re.compile(
+    r"\b(?:đề nghị|mong|xin|yêu cầu)\s+(?:(?:được|xem xét)\s+)*(?:gia hạn|kéo dài)\b", re.I
+)
+_FOLLOWUP_REMINDER = re.compile(
+    r"\b(?:nhắc lại|nhắc nhở|nhắc (?:đăng k[ýí]|nộp|đóng|tham gia)|"
+    r"(?:sắp|sẽ) hết hạn|lưu ý thời hạn)\b",
+    re.I,
+)
+_FOLLOWUP_CONTINUATION = re.compile(
+    r"\b(?:gửi lại|gửi bổ sung|xin bổ sung|bổ sung thông tin|thông tin bổ sung|"
+    r"(?:xác nhận|chốt) (?:lịch|thời gian|địa điểm|kết quả))\b",
+    re.I,
+)
+_OTHER_CHANGE = re.compile(r"\b(?:đính chính|thay đổi|hoãn|hủy|mở lại|dời lịch|đổi lịch)\b", re.I)
+_NUMBERED_ITEM = re.compile(r"^[\s*#-]*(?:\d{1,2}|[IVX]+)[.)]\s+", re.I)
+_TASK_SCOPE = re.compile(r"\b(?:phiên|ca|vòng|đợt|nhóm)\s+(?:\d+|[IVX]+)\b", re.I)
+_TIME_INTERVAL = re.compile(r"\btừ\b[^.;\n]+\b(?:đến|tới)\b", re.I)
+_TASK_OBJECT_END = re.compile(r"\b(?:trước|đến|từ|lúc|hạn|qua|tại|cho|bằng|vào)\b", re.I)
+_TASK_ACTIONS = {
+    "register": re.compile(r"\b(?:đăng k[ýí]|ghi danh)\b", re.I),
+    "submit": re.compile(r"\b(?:nộp(?!\s+học phí)|gửi)\b", re.I),
+    "pay": re.compile(r"\b(?:đóng|thanh toán|nộp\s+học phí)\b", re.I),
+    "complete": re.compile(r"\bhoàn thành\b", re.I),
+}
 _STOP = frozenset(
     "và của các trong về được cho là tại với để theo từ đến vào một này "
     "sẽ đã khi thông tin nhắc hội thảo nghị thi giải thưởng trình chương ngày "
@@ -75,6 +107,18 @@ class FollowupEvidence:
     routing: RoutingComparison
     title_sentences: tuple[tuple[str, ...], tuple[str, ...]]
     reason: str | None
+
+
+@dataclass(frozen=True)
+class FollowupRelation:
+    """Carry a proposed pair decision and source span IDs for a deadline change."""
+
+    decision: str
+    reason: str
+    notice_relation: Literal["REMINDER", "REPEATED_NOTICE", "UPDATE", "OTHER"] = "OTHER"
+    update_side: int | None = None
+    old_span_id: str | None = None
+    new_span_id: str | None = None
 
 
 def load_email_routing(notice: Notice, directory: Path) -> EmailRouting | None:
@@ -248,3 +292,119 @@ def followup_evidence(
             else "title_with_corroborating_reference"
         )
     return FollowupEvidence(title, reference, joint, routing, pointers, reason)
+
+
+def _deadline(mention: GroupingModelMention) -> tuple[str, date] | None:
+    arguments = [arg for arg in mention.event.arguments if arg.role == "DEADLINE"]
+    if len(arguments) != 1 or arguments[0].inferred:
+        return None
+    arg = arguments[0]
+    span = next((s for s in mention.spans if s.span_id == arg.span_id and s.label == "TIME"), None)
+    if span is None or _TIME_INTERVAL.search(span.text):
+        return None
+    value = single_calendar_date(span.text)
+    if value is None or arg.normalized_date not in (None, value):
+        return None
+    return span.span_id, value
+
+
+def _task_action(mention: GroupingModelMention) -> tuple[str, frozenset[str]] | None:
+    action = next(s.text for s in mention.spans if s.span_id == mention.event.action_span_id)
+    families = [(key, m) for key, pattern in _TASK_ACTIONS.items() if (m := pattern.search(action))]
+    if len(families) != 1:
+        return None
+    family, verb = families[0]
+    target = _TASK_OBJECT_END.split(action[verb.end() :], maxsplit=1)[0]
+    return family, frozenset(_title_tokens(_TASK_SCOPE.sub("", target)))
+
+
+def _same_task(left: GroupingModelMention, right: GroupingModelMention) -> bool:
+    a = _task_action(left)
+    b = _task_action(right)
+    return (
+        a is not None and b is not None and a[0] == b[0] and (not a[1] or not b[1] or a[1] == b[1])
+    )
+
+
+def _resolve_extension(
+    old: tuple[str, date] | None,
+    new: tuple[str, date] | None,
+    later: int,
+    same_task: bool,
+    latest: str,
+) -> FollowupRelation:
+    if (
+        old is None
+        or new is None
+        or new[1] <= old[1]
+        or not same_task
+        or _EXTENSION_REQUEST.search(latest)
+    ):
+        return FollowupRelation("UNCLEAR", "unresolved_deadline_extension")
+    return FollowupRelation(
+        "UPDATE_OF", "explicit_deadline_extension", "UPDATE", later, old[0], new[0]
+    )
+
+
+def resolve_followup(
+    left: GroupingModelMention,
+    right: GroupingModelMention,
+    notices: tuple[Notice, Notice],
+    evidence: PairEvidence,
+    followup: FollowupEvidence,
+    decision: str,
+) -> FollowupRelation:
+    """Refine a prior decision using a scoped follow-up marker and shared event cues.
+
+    Supply validated mentions in the same order as their notices and evidence.
+    Decide deadline extensions only for a matched task family with one explicit
+    full deadline per side. An update returns its newer side (0 for left), plus
+    the old and new span IDs. Competing dates, requests and unscoped changes
+    remain for review. Apply independent scope checks before accepting a merge.
+    """
+    prior = FollowupRelation(decision, "base")
+    if evidence.conflict:
+        return FollowupRelation("DIFFERENT_EVENT", "explicit_event_conflict")
+    if decision == "UPDATE_OF" or left.doc_id == right.doc_id:
+        return prior
+    later = followup.routing.later
+    if later is None:
+        a, b = (notice.reference_date for notice in notices)
+        if a is None or b is None or a == b:
+            return prior
+        later = int(a < b)
+    mentions = (left, right)
+    contexts = tuple(mention_context(m, n) for m, n in zip(mentions, notices, strict=True))
+    latest = contexts[later]
+    extension = bool(_EXTEND.search(latest))
+    reminder = bool(_FOLLOWUP_REMINDER.search(latest))
+    continuation = _FOLLOWUP_CONTINUATION.search(latest)
+    if not (extension or reminder or continuation):
+        return prior
+
+    numbered = any(_NUMBERED_ITEM.match(s.text) for n in notices for s in n.sentences)
+    scoped_parent = (
+        followup.routing.direct_parent
+        and not numbered
+        and evidence.features[0] >= 0.30
+        and evidence.features[1] > 0
+    )
+    corroborated = followup.title or evidence.anchor == "explicit_event_code" or scoped_parent
+    if not corroborated:
+        return prior
+
+    scopes = [{m[0].casefold() for m in _TASK_SCOPE.finditer(value)} for value in contexts]
+    same_task = scopes[0] == scopes[1] and len(scopes[0]) <= 1 and _same_task(left, right)
+    old, new = (_deadline(mentions[i]) for i in (1 - later, later))
+    matching_deadlines = old is not None and new is not None and old[1] == new[1]
+    if extension and not (reminder and matching_deadlines):
+        return _resolve_extension(old, new, later, same_task, latest)
+    if same_task and old is not None and new is not None and not matching_deadlines:
+        return FollowupRelation("UNCLEAR", "conflicting_deadline_without_extension")
+    if _OTHER_CHANGE.search(latest):
+        return FollowupRelation("UNCLEAR", "unresolved_non_deadline_change")
+    if reminder:
+        return FollowupRelation("SAME_EVENT", "source_backed_reminder", "REMINDER")
+    if continuation and continuation[0].casefold() == "gửi lại":
+        return FollowupRelation("SAME_EVENT", "source_backed_continuation", "REPEATED_NOTICE")
+    return FollowupRelation("SAME_EVENT", "source_backed_continuation")

@@ -40,6 +40,7 @@ class EmailRouting:
     sender: str | None
     message_id: str | None
     parent_id: str | None
+    subject: str | None = None
 
 
 def parse_email_routing(raw: bytes) -> EmailRouting:
@@ -47,7 +48,7 @@ def parse_email_routing(raw: bytes) -> EmailRouting:
 
     Require a timezone for minute comparisons and a single From mailbox.
     Prefer an unambiguous In-Reply-To, then the last References ID. Callers
-    must export only derived pair facts, never these header fields.
+    must export only derived pair facts, never these header fields or the subject.
     """
     message = BytesParser(policy=policy.default).parsebytes(raw, headersonly=True)
     date_headers = message.get_all("Date", [])
@@ -71,11 +72,13 @@ def parse_email_routing(raw: bytes) -> EmailRouting:
     message_ids = ids("Message-ID")
     in_reply_to = ids("In-Reply-To")
     references = ids("References") if "In-Reply-To" not in message else []
+    subjects = message.get_all("Subject", [])
     return EmailRouting(
         sent_at,
         sender,
         message_ids[0] if len(message_ids) == 1 else None,
         in_reply_to[0] if len(in_reply_to) == 1 else (references[-1] if references else None),
+        str(subjects[0]) if len(subjects) == 1 else None,
     )
 
 
