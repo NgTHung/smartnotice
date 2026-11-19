@@ -223,6 +223,15 @@ def test_reply_candidate_requires_a_verified_source_and_cannot_merge_on_headers(
     [proposal] = with_headers.proposals
     assert proposal.candidate_reasons == ["verified_direct_reply"]
     assert proposal.pair.decision == "UNCLEAR"
+    aligned = propose_event_groups(
+        notices,
+        labels,
+        generated_at=STAMP,
+        checkpoint=model,
+        raw_email_dir=tmp_path,
+        align_followup=True,
+    )
+    assert aligned.proposals[0].pair.decision == "UNCLEAR"
     (tmp_path / f"{notices[0].raw_sha256}.eml").write_bytes(b"unexpected fixture bytes")
     with pytest.raises(ValueError, match="source hash differs"):
         propose_event_groups(
@@ -230,7 +239,108 @@ def test_reply_candidate_requires_a_verified_source_and_cannot_merge_on_headers(
         )
 
 
-def test_checkpoint_keeps_distinct_academic_terms_separate():
+def _verified_reply_sources(folder: Path, parent: Notice, reply: Notice) -> list[Notice]:
+    notices = []
+    for notice, letter_id, parent_line in (
+        (parent, "design-a", ""),
+        (reply, "design-b", "In-Reply-To: <design-a@example.edu>\r\n"),
+    ):
+        raw = f"Message-ID: <{letter_id}@example.edu>\r\n{parent_line}\r\n".encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        (folder / f"{digest}.eml").write_bytes(raw)
+        notices.append(notice.model_copy(update={"raw_sha256": digest}))
+    return notices
+
+
+def test_align_verified_reply_with_one_source_item(tmp_path):
+    parent, parent_label = source(
+        "parent",
+        "Nộp bản vẽ thiết kế cầu gỗ",
+        "Cuộc thi “Thiết kế cầu gỗ chịu tải”.",
+    )
+    reply, reply_label = source(
+        "reply",
+        "Hỏi về cách gửi bản vẽ",
+        "Cuộc thi “Thiết kế cầu gỗ chịu tải”.",
+    )
+    notices = _verified_reply_sources(tmp_path, parent, reply)
+    labels = [parent_label, reply_label]
+    options = {"generated_at": STAMP, "checkpoint": checkpoint(-10), "raw_email_dir": tmp_path}
+    baseline = propose_event_groups(notices, labels, **options)
+    assert baseline.proposals[0].pair.decision == "UNCLEAR"
+    aligned = propose_event_groups(notices, labels, align_followup=True, **options)
+
+    [proposal] = aligned.proposals
+    assert aligned.rule_version == "automatic-event-grouping-model-assisted-alignment-v1"
+    assert proposal.pair.decision == "SAME_EVENT"
+    assert {"source_aligned_followup", "direct_reply_shared_phrase"} <= set(proposal.reasons)
+    assert proposal.pair.task_relation == "UNRESOLVED"
+    assert not proposal.pair.changes
+    [group] = aligned.assembly.groups
+    assert len(group.tasks) == 2
+    assert group.review_required and group.privacy_review_required
+    original = {notice.doc_id: notice.text for notice in notices}
+    assert all(original[q.doc_id][q.start : q.end] == q.text for q in proposal.pair.evidence)
+    assert {q.sentence_id for q in proposal.pair.evidence} == {"action", "context"}
+
+
+def test_direct_reply_with_two_compatible_parent_items_stays_separate(tmp_path):
+    parent, parent_label = source(
+        "parent",
+        "Đăng ký bản vẽ thiết kế cầu gỗ chịu tải.",
+        "Chuẩn bị bản vẽ thiết kế cầu gỗ chịu tải.",
+    )
+    second = "Nộp bản vẽ thiết kế cầu gỗ chịu tải."
+    start = len(parent.text) + 1
+    end = start + len(second)
+    parent = parent.model_copy(
+        update={
+            "text": parent.text + "\n" + second,
+            "sentences": [
+                *parent.sentences,
+                Sentence(sentence_id="second", start=start, end=end, text=second),
+            ],
+        }
+    )
+    parent_label.spans.append(Span(span_id="a2", label="ACTION", start=start, end=end, text=second))
+    parent_label.events.append(
+        Event(event_id="e2", action_span_id="a2", arguments=[], evidence_sentence_ids=["second"])
+    )
+    reply, reply_label = source(
+        "reply",
+        "Liên hệ về bản vẽ thiết kế cầu gỗ chịu tải.",
+        "Nhắc lại thủ tục bản vẽ thiết kế cầu gỗ chịu tải.",
+    )
+    notices = _verified_reply_sources(tmp_path, parent, reply)
+    labels = [parent_label, reply_label]
+    options = {"generated_at": STAMP, "checkpoint": checkpoint(-10), "raw_email_dir": tmp_path}
+    baseline = propose_event_groups(notices, labels, **options)
+    assert any(p.pair.decision == "SAME_EVENT" for p in baseline.proposals)
+
+    aligned = propose_event_groups(notices, labels, align_followup=True, **options)
+    replies = [p for p in aligned.proposals if "verified_direct_reply" in p.candidate_reasons]
+    assert len(replies) == 2
+    assert all(
+        p.pair.decision == "UNCLEAR" and p.reasons == ["ambiguous_followup_target"] for p in replies
+    )
+    assert len(aligned.assembly.groups) == 3
+
+
+def test_alignment_mode_requires_checkpoint_and_existing_email_directory(tmp_path):
+    with pytest.raises(ValueError, match="Alignment requires"):
+        propose_event_groups([], [], generated_at=STAMP, align_followup=True)
+    with pytest.raises(ValueError, match="Alignment requires"):
+        propose_event_groups(
+            [],
+            [],
+            generated_at=STAMP,
+            align_followup=True,
+            checkpoint=checkpoint(0),
+            raw_email_dir=tmp_path / "missing",
+        )
+
+
+def test_checkpoint_keeps_distinct_academic_terms_separate(tmp_path):
     items = [
         source(
             doc,
@@ -249,6 +359,17 @@ def test_checkpoint_keeps_distinct_academic_terms_separate():
     assert assisted.proposals[0].pair.decision == "DIFFERENT_EVENT"
     assert assisted.proposals[0].reasons == ["separate_academic_scope"]
     assert len(assisted.assembly.groups) == 2
+
+    aligned = propose_event_groups(
+        notices,
+        annotations,
+        generated_at=STAMP,
+        checkpoint=checkpoint(10),
+        raw_email_dir=tmp_path,
+        align_followup=True,
+    )
+    assert aligned.proposals[0].pair.decision == "DIFFERENT_EVENT"
+    assert len(aligned.assembly.groups) == 2
 
 
 @pytest.mark.parametrize(

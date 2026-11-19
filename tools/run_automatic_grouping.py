@@ -15,6 +15,7 @@ from smartnotice.labeling.automatic_grouping import (
     propose_event_groups,
 )
 from smartnotice.labeling.group_viewer import render_group_review
+from smartnotice.labeling.grouping_rerank import FollowupRerankModel
 from smartnotice.labeling.studio import import_prediction_tasks
 from smartnotice.schemas import (
     Annotation,
@@ -64,10 +65,23 @@ def main() -> None:
     parser.add_argument("--reference-assembly", type=Path)
     parser.add_argument("--checkpoint", type=Path, help="Optional grouping-logistic-v2 checkpoint")
     parser.add_argument("--raw-email-dir", type=Path, help="Local hash-named email source files")
+    parser.add_argument(
+        "--align-followup", action="store_true", help="Match follow-ups to a specific source item"
+    )
+    parser.add_argument("--followup-reranker", type=Path, help="Optional item reranker checkpoint")
+    parser.add_argument(
+        "--resolve-followup-updates",
+        action="store_true",
+        help="Resolve evidenced deadline or status changes for uniquely aligned replies",
+    )
     parser.add_argument("--generated-at", type=datetime.fromisoformat)
     parser.add_argument("--candidate-similarity", type=float, default=0.35)
     parser.add_argument("--min-shared-tokens", type=int, default=3)
     args = parser.parse_args()
+    if args.align_followup and (args.checkpoint is None or args.raw_email_dir is None):
+        parser.error("--align-followup requires --checkpoint and --raw-email-dir")
+    if (args.followup_reranker or args.resolve_followup_updates) and not args.align_followup:
+        parser.error("--followup-reranker and --resolve-followup-updates require --align-followup")
     if args.raw_email_dir is not None and args.checkpoint is None:
         parser.error("--raw-email-dir requires --checkpoint")
     if args.raw_email_dir is not None and not args.raw_email_dir.is_dir():
@@ -80,6 +94,8 @@ def main() -> None:
     template = Path(__file__).parent / "templates/group_review.html.template"
     inputs = [args.notices, args.annotations or args.predictions]
     inputs += [p for p in [args.time_boundaries, args.reference_assembly, args.checkpoint] if p]
+    if args.followup_reranker:
+        inputs.append(args.followup_reranker)
     code = [
         Path(__file__),
         Path("src/labeling/automatic_grouping.py"),
@@ -103,10 +119,21 @@ def main() -> None:
                 Path("src/parsers/email.py"),
             ]
         )
+    if args.align_followup:
+        code.append(Path("src/labeling/grouping_alignment.py"))
+    if args.followup_reranker:
+        code.append(Path("src/labeling/grouping_rerank.py"))
+    if args.resolve_followup_updates:
+        code.append(Path("src/labeling/grouping_updates.py"))
     before = {p.as_posix(): _sha(p) for p in inputs + code}
     checkpoint = (
         GroupingLinearModel.model_validate_json(args.checkpoint.read_bytes())
         if args.checkpoint is not None
+        else None
+    )
+    followup_reranker = (
+        FollowupRerankModel.model_validate_json(args.followup_reranker.read_bytes())
+        if args.followup_reranker
         else None
     )
     notices = _read(args.notices, Notice)
@@ -146,6 +173,9 @@ def main() -> None:
         else None,
         checkpoint=checkpoint,
         raw_email_dir=args.raw_email_dir,
+        align_followup=args.align_followup,
+        followup_reranker=followup_reranker,
+        resolve_followup_updates=args.resolve_followup_updates,
     )
     comparison = None
     if args.reference_assembly:
@@ -209,6 +239,16 @@ def main() -> None:
         run["label_origin"] = run["label_origin"].replace(
             "rule_proposals", "model_assisted_rule_proposals"
         )
+        if args.align_followup:
+            run["checkpoint"]["align_followup"] = True
+        if followup_reranker is not None:
+            run["checkpoint"]["followup_reranker"] = {
+                "kind": followup_reranker.kind,
+                "threshold": followup_reranker.threshold,
+                "margin": followup_reranker.margin,
+            }
+        if args.resolve_followup_updates:
+            run["checkpoint"]["resolve_followup_updates"] = True
     output.mkdir(parents=True)
     write_jsonl(output / "annotations.jsonl", [a.model_dump(mode="json") for a in annotations])
     _dump(output / "result.json", result.model_dump(mode="json"))

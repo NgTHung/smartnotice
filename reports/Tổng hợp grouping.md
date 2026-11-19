@@ -150,6 +150,45 @@ Bảy cặp đối chứng do trợ lý đã gán nhãn trước đó nằm ngo�
 
 Đường dẫn `reports/generated/grouping-scope-regression-2026-11-18/` giữ `replay-delta.json`, `final/assembly-delta.json` và hồ sơ lấy mẫu đối chứng `insurance-review/`. Năm ca tổng hợp mới kiểm tra phạm vi của quy tắc. Bộ kiểm thử đạt 389 ca, cùng Ruff, demo offline và lượt chạy trên toàn batch.
 
+## 18/11/2026 · Kiểm chứng việc nối thư tiếp theo mục nguồn
+
+Commit `392360c` lưu mã, kiểm thử tổng hợp và báo cáo của mốc trước. Lượt này so sánh cùng checkpoint V2 fit trên 79 cặp và cùng bộ annotation của từng mẫu. Giữ ngưỡng 0,5. Chạy `tools/run_automatic_grouping.py` có và không có `--align-followup`. Bản bật tùy chọn đối chiếu các ACTION của cả hai thư. Một cặp cần có bằng chứng nội dung phù hợp và xác định được duy nhất giữa các mục cạnh tranh. Tín hiệu gồm mã sự kiện, phạm vi kỳ thi đủ cụ thể, cụm từ trong bằng chứng hoặc biểu mẫu đi kèm nội dung phù hợp. Liên kết nguồn bổ sung căn cứ về sự kiện. Quan hệ đầu việc và cập nhật vẫn qua kiểm tra riêng.
+
+Gói đối chứng gồm 74 cặp đã được trợ lý gán nhãn trong các lượt trước, nằm ngoài các nhóm đã dùng để fit checkpoint và ngoài mẫu người dùng. Chạy riêng 14 cặp thuộc train, 21 cặp validation và 39 cặp test. Nhóm tài liệu và chuỗi trả lời đã biết được giữ nguyên. Sau khi loại các nhóm từng sử dụng, không còn cặp trả lời trực tiếp mới đủ điều kiện. Trợ lý duyệt thêm tám cặp chọn theo tiêu đề hoặc mẫu câu ở phần train giữ riêng. Trong đó có ba cặp khác sự kiện và năm cặp chưa rõ. Việc chọn và ghi nhãn diễn ra trước khi xem dự đoán của A.
+
+| Mẫu đối chiếu | Cặp cần gộp vào cùng nhóm, mốc → A | Cặp khác sự kiện gộp nhầm, mốc → A |
+|---|---:|---:|
+| 30 cặp người dùng đã chấm | 1/7 → 1/7 | 0/20 → 0/20 |
+| 74 cặp trợ lý đã duyệt trước | 2/10 → 3/10 | 0/59 → 0/59 |
+| 13 cặp trả lời trực tiếp trong 74 cặp trên | 2/9 → 3/9 | 0/3 → 0/3 |
+| 8 cặp mới dùng mẫu hoặc tiêu đề tương tự | Không có cặp dương | 0/3 → 0/3 |
+
+Ca gộp đúng thêm đến từ phần train giữ riêng và có cụm từ chung trong bằng chứng của hai ACTION. Các cặp validation và test đã duyệt trước giữ nguyên kết quả. Trên mẫu người dùng, ba cặp dương tiếp tục chờ duyệt do không xác định được mục nguồn duy nhất, ba cặp còn lại thiếu căn cứ nhận diện. Cả hai lượt có 21/27 quyết định gộp hoặc giữ riêng đúng và 0/2 cập nhật đúng chiều. Mẫu mới chỉ đo được gộp nhầm. Chưa có đánh giá độc lập về khả năng tìm thêm cặp dương trong các chuỗi thư mới.
+
+Trên batch 434 email, A chuyển 12 đề xuất từ `SAME_EVENT` sang `UNCLEAR` và sáu đề xuất theo chiều ngược lại. Các cặp kiểm tra tính nhất quán trong thành phần liên thông cũng thay đổi. Số nhóm chứa nhiều lần nhắc tăng từ 25 lên 32, số xung đột giảm từ 85 xuống 81. Batch thiếu nhãn đối chiếu cho các thay đổi này nên số đếm chỉ mô tả hành vi. A phù hợp để giữ ở chế độ thử nghiệm. Sáu ca người dùng còn bỏ sót cần đối chiếu nội dung diễn đạt khác nhau và hiểu đối tượng được nhắc tới, đặc biệt các thư trả lời ngắn.
+
+Lưu cách chọn dữ liệu, mốc và số đo tại `reports/generated/grouping-alignment-2026-11-18/`. `comparison-summary.json` tổng hợp số đo và checksum. Các thư mục `results/` lưu hai lần chạy theo từng mẫu. `full-batch/` giữ hai trang duyệt cục bộ. 400 kiểm thử trong workspace, Ruff, demo tổng hợp và kiểm tra diff đạt.
+
+## 19/11/2026 · Chọn mục nguồn và xác minh cập nhật
+
+Chuẩn bị 82 cặp email thực trên 41 tài liệu với 12 nhãn đúng mục, 17 nhãn sai mục và 53 ca chưa rõ. Mười ba nhãn sai mục mới đến từ đối chiếu nguồn ở các chuỗi đã xem. Ghi nhãn mục nguồn riêng với nhãn sự kiện, vì hai mục khác nhau có thể thuộc cùng một sự kiện. Tài liệu, nhóm chia tập và các chuỗi trả lời đã biết được cách ly giữa train, validation và test. Giữ mẫu 30 cặp người dùng đã xem làm kiểm tra hồi quy. Kho hiện có chưa cung cấp chuỗi trả lời mới đủ điều kiện kiểm chứng độc lập. Chuẩn bị thêm 42 cặp tổng hợp trên 42 tài liệu, giữ riêng từng phân vùng. Tất cả 124 cặp được kiểm tra offset, mã sự kiện, nguồn và chiều thư trả lời.
+
+D dùng 11 đặc trưng về ACTION, đoạn bằng chứng, từ và cụm ký tự, dấu hiệu khái niệm và phạm vi nguồn. Fit hồi quy logistic L2 có cân bằng lớp trên 19 cặp train có đích rõ, gồm tám đúng mục và mười một sai mục. D yêu cầu bằng chứng nội dung, điểm tối thiểu 0,60 và biên 0,10 so với mục kế tiếp. Giữ seed 42 và không đổi tham số sau khi chấm. Lượt fit lại tạo checkpoint giống từng byte. B kiểm tra trích dẫn cũ và mới của hạn hoặc trạng thái sau khi xác nhận được mục nguồn duy nhất. Luồng dựng nhóm vẫn kiểm tra mâu thuẫn trước khi áp dụng.
+
+| Mẫu và chỉ số | A | A + D | A + D + B |
+|---|---:|---:|---:|
+| Train email thực, chọn đúng mục | 3/8 | 5/8 | 5/8 |
+| Validation email thực, chọn đúng mục | 2/2 | 2/2 | 2/2 |
+| Test email thực, chọn đúng mục | 1/2 | 1/2 | 1/2 |
+| Mẫu người dùng, gộp đúng cặp cần gộp | 1/7 | 1/7 | 1/7 |
+| Test tổng hợp, áp dụng đúng trường và chiều cập nhật | 0/3 | 0/3 | 1/3 |
+
+Trên validation và test email thực, ba phương án cùng chọn nhầm hai trong sáu mục sai đã biết. Đây là lỗi xác định mục, có thể xảy ra khi hai đầu việc cùng sự kiện. Mẫu người dùng giữ 21/27 quyết định gộp hoặc giữ riêng đúng và 0/2 cập nhật đúng chiều. D đưa một cặp có nhãn người `UNCLEAR` vào cùng nhóm. Báo riêng trường hợp này vì nhãn chưa rõ nằm ngoài mẫu số nhị phân. Cải thiện của D trên các cặp dùng để fit chưa xuất hiện ở hai tập đánh giá.
+
+B đề xuất đúng trường và đúng chiều cho cả ba ca cập nhật ở test tổng hợp. Bộ dựng nhóm áp dụng ca khôi phục `STATUS` và giữ lại hai ca `DEADLINE` do thành phần sự kiện có quyết định mâu thuẫn. Kiểm thử tích hợp tách riêng xác nhận hạn mới thay thế đúng hạn cũ khi nhóm nhất quán. B chưa áp dụng được ca cập nhật nào trong các mẫu email thực có nhãn. Trên batch 434 email chưa có đối chiếu đầy đủ, A, A + D và A + D + B dựng lần lượt 32, 49 và 49 nhóm nhiều lần nhắc. Không có cập nhật được áp dụng. Các số đếm batch mô tả hành vi của hệ thống. D và B được giữ dưới tùy chọn thử nghiệm để chờ phép đo trên chuỗi thư mới.
+
+Lưu dữ liệu, checksum, checkpoint và phép đo tại `reports/generated/grouping-cdb-2026-11-19/`. `data/source-audit.json` ghi kiểm tra nguồn. `comparison-summary.json` tổng hợp 18 lượt chạy. Các kiểm thử phần mềm, Ruff và demo offline đạt.
+
 ## Ghi lần chạy tiếp theo
 
 Thêm mục có ngày, mục tiêu lỗi cần xử lý, phiên bản dữ liệu và checksum của run. Ghi số tài liệu hoặc cặp, nguồn gốc nhãn, split, seed, tham số, số gộp đúng, gộp nhầm và bỏ sót theo từng mẫu. Giữ kết quả kiểm thử phần mềm riêng với số đo chất lượng. Dùng lệnh trong [quy trình đánh giá](../docs/evaluation.md) để tái tạo, và dẫn đến đường dẫn cục bộ của bằng chứng thay vì tạo thêm một báo cáo validation grouping.

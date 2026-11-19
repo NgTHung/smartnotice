@@ -515,7 +515,11 @@ class AutomaticGroupingResult(Record):
     """Exchange rule proposals and their provisional assembled groups."""
 
     rule_version: Literal[
-        "automatic-event-grouping-v1", "automatic-event-grouping-model-assisted-v1"
+        "automatic-event-grouping-v1",
+        "automatic-event-grouping-model-assisted-v1",
+        "automatic-event-grouping-model-assisted-alignment-v1",
+        "automatic-event-grouping-model-assisted-rerank-v1",
+        "automatic-event-grouping-model-assisted-updates-v1",
     ] = "automatic-event-grouping-v1"
     config: AutomaticGroupingConfig
     generated_at: datetime

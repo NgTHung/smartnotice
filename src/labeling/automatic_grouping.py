@@ -2,14 +2,21 @@
 
 import hashlib
 import re
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import cache
 from itertools import combinations
 from math import isfinite
 from pathlib import Path
 
 from smartnotice.labeling.event_groups import assembly_fingerprint, build_event_groups
 from smartnotice.labeling.grouping_academic import academic_scope, apply_academic_scope
+from smartnotice.labeling.grouping_alignment import (
+    FollowupAlignment,
+    align_followup_mentions,
+    build_followup_profiles,
+)
 from smartnotice.labeling.grouping_evidence import (
     compare_pair_evidence,
     evidence_decision,
@@ -23,6 +30,12 @@ from smartnotice.labeling.grouping_followup import (
     resolve_followup,
 )
 from smartnotice.labeling.grouping_model import MODEL_FEATURES, grouping_probability, pair_features
+from smartnotice.labeling.grouping_rerank import (
+    FollowupRerankModel,
+    rerank_followup_mentions,
+    validate_rerank_model,
+)
+from smartnotice.labeling.grouping_updates import resolve_followup_update
 from smartnotice.schemas import (
     Annotation,
     AssemblyMention,
@@ -133,6 +146,16 @@ _REASON_TEXT = {
         "Mô hình vượt ngưỡng gộp và nguồn có dấu hiệu nhận diện cùng sự kiện."
     ),
     "source_backed_followup": "Nguồn có dấu hiệu thư tiếp nối cùng sự kiện.",
+    "source_aligned_followup": "Bằng chứng xác định được đúng mục tương ứng trong hai nguồn.",
+    "reranked_reply_match": "Bộ so sánh nội dung tìm được một mục phù hợp hơn các mục còn lại.",
+    "reranked_target_for_review": "Bộ so sánh xác định mục cần đối chiếu thêm.",
+    "verified_deadline_change": "Hai thư nêu thời hạn cũ và thời hạn mới của cùng đầu việc.",
+    "verified_status_restoration": "Hai thư xác nhận cùng hệ thống gặp sự cố rồi hoạt động lại.",
+    "ambiguous_followup_target": "Thư trả lời chưa xác định được một mục trong thư trước.",
+    "direct_reply_event_code": "Mục gốc và thư trả lời nêu cùng mã sự kiện.",
+    "direct_reply_exam_scope": "Mục gốc và thư trả lời nêu cùng môn, kỳ học và giai đoạn thi.",
+    "continuation_form_and_phrase": "Hai mục có cùng biểu mẫu và cụm từ nhận diện.",
+    "direct_reply_shared_phrase": "Mục gốc và thư trả lời có cụm từ nhận diện trùng nhau.",
     "conflicting_contextual_identity": "Các đoạn nguồn lân cận nêu kỳ hoặc mã sự kiện khác nhau.",
     "explicit_deadline_extension": "Thư sau kéo dài đúng thời hạn của thư trước.",
     "unresolved_deadline_extension": "Cần xác định đầu việc đã được gia hạn và hai thời hạn.",
@@ -250,6 +273,27 @@ def _candidate(a: _Profile, b: _Profile, config: AutomaticGroupingConfig) -> lis
     return reasons
 
 
+def _task_relation(a: _Profile, b: _Profile, followup: FollowupRelation | None = None) -> str:
+    if a.sessions and b.sessions and a.sessions.isdisjoint(b.sessions):
+        return "DIFFERENT_SESSION"
+    if (
+        a.family is not None
+        and a.family == b.family
+        and (
+            _similarity(a.identity, b.identity) >= 0.8
+            or (
+                followup
+                and followup.decision == "UPDATE_OF"
+                and not (a.conditional or b.conditional)
+            )
+        )
+    ):
+        return "SAME_TASK"
+    if a.family and b.family:
+        return "CONDITIONAL_TASK" if a.conditional or b.conditional else "DIFFERENT_TASK"
+    return "UNRESOLVED"
+
+
 def _decide(
     a: _Profile,
     b: _Profile,
@@ -285,17 +329,7 @@ def _decide(
         return a, b, "UNCLEAR", "UNRESOLVED", [], ["insufficient_event_identity"]
     if a.specialties != b.specialties and (a.specialties or b.specialties):
         return a, b, "UNCLEAR", "UNRESOLVED", [], ["specialty_scope_missing_on_one_side"]
-    same_family = a.family is not None and a.family == b.family
-    relation = "UNRESOLVED"
-    if a.sessions and b.sessions and a.sessions.isdisjoint(b.sessions):
-        relation = "DIFFERENT_SESSION"
-    elif same_family and (
-        _similarity(a.identity, b.identity) >= 0.8
-        or (followup and followup.decision == "UPDATE_OF" and not (a.conditional or b.conditional))
-    ):
-        relation = "SAME_TASK"
-    elif a.family and b.family:
-        relation = "CONDITIONAL_TASK" if a.conditional or b.conditional else "DIFFERENT_TASK"
+    relation = _task_relation(a, b, followup)
     if a.unsupported_update or b.unsupported_update:
         return a, b, "UNCLEAR", "UNRESOLVED", [], ["location_or_status_change_requires_review"]
     if relation != "SAME_TASK":
@@ -385,6 +419,9 @@ def propose_event_groups(
     time_boundaries: list[TimeBoundaryReview] | None = None,
     checkpoint: GroupingLinearModel | None = None,
     raw_email_dir: Path | None = None,
+    align_followup: bool = False,
+    followup_reranker: FollowupRerankModel | None = None,
+    resolve_followup_updates: bool = False,
 ) -> AutomaticGroupingResult:
     """Propose and assemble groups offline from validated per-item annotations.
 
@@ -392,8 +429,11 @@ def propose_event_groups(
     By default, require an explicit event code or a distinctive name with a
     matching period or date. An optional evidence checkpoint adds corroborated
     identity cues. With a checkpoint, local hash-verified emails can supply
-    reply and close-send candidates. Compare dates inside their task. Updates
-    require explicit language and source-bound time quotes.
+    reply and close-send candidates. With both inputs, `align_followup` can add
+    evidence for event identity by matching unique source items across the two
+    notices. The optional reranker orders unresolved items in verified replies.
+    The optional update resolver requires a unique target and exact old and new
+    evidence. Compare dates inside their task.
 
     Check every cross-pair of a proposed positive component, including omitted
     candidates, before assembly. All outputs require review. Preserve input text,
@@ -416,12 +456,34 @@ def propose_event_groups(
         )
     ):
         raise ValueError("Expected a finite evidence checkpoint with the v2 feature order")
+    if align_followup and (
+        checkpoint is None or raw_email_dir is None or not raw_email_dir.is_dir()
+    ):
+        raise ValueError(
+            "Alignment requires an evidence checkpoint and a local raw email directory"
+        )
     if raw_email_dir is not None and (checkpoint is None or not raw_email_dir.is_dir()):
         raise ValueError("A local raw email directory requires an evidence checkpoint")
+    if (followup_reranker is not None or resolve_followup_updates) and not align_followup:
+        raise ValueError("Follow-up reranking and updates require source alignment")
+    if followup_reranker is not None:
+        validate_rerank_model(followup_reranker)
+    rule_version = "automatic-event-grouping-v1"
+    reviewer = "automatic_grouping_rules_v1"
+    if align_followup:
+        rule_version = "automatic-event-grouping-model-assisted-alignment-v1"
+        reviewer = "automatic_grouping_model_assisted_alignment_v1"
+    elif checkpoint is not None:
+        rule_version = "automatic-event-grouping-model-assisted-v1"
+        reviewer = "automatic_grouping_model_assisted_v1"
+    if resolve_followup_updates:
+        rule_version = "automatic-event-grouping-model-assisted-updates-v1"
+        reviewer = "automatic_grouping_model_assisted_updates_v1"
+    elif followup_reranker is not None:
+        rule_version = "automatic-event-grouping-model-assisted-rerank-v1"
+        reviewer = "automatic_grouping_model_assisted_rerank_v1"
     author = ReviewAuthor(
-        reviewer_id="automatic_grouping_model_assisted_v1"
-        if checkpoint is not None
-        else "automatic_grouping_rules_v1",
+        reviewer_id=reviewer,
         reviewer_kind="ai_assistant",
         reviewed_at=generated_at,
     )
@@ -464,10 +526,33 @@ def propose_event_groups(
             ref: academic_scope(mention, documents[mention.doc_id], headers.get(mention.doc_id))
             for ref, mention in model_mentions.items()
         }
+    source_profiles = {}
+    if align_followup:
+        mentions_by_doc = defaultdict(list)
+        for mention in model_mentions.values():
+            mentions_by_doc[mention.doc_id].append(mention)
+        source_profiles = {
+            doc_id: build_followup_profiles(documents[doc_id], mentions, headers.get(doc_id))
+            for doc_id, mentions in mentions_by_doc.items()
+        }
+
+    @cache
+    def document_matches(left_doc: str, right_doc: str) -> dict[tuple[str, str], FollowupAlignment]:
+        return align_followup_mentions(
+            source_profiles[left_doc],
+            source_profiles[right_doc],
+            compare_routing(headers.get(left_doc), headers.get(right_doc)),
+        )
+
     proposals: dict[tuple[str, str], AutomaticPairProposal] = {}
 
     def refine(
-        left: str, right: str, result: tuple, model: GroupingLinearModel
+        left: str,
+        right: str,
+        result: tuple,
+        model: GroupingLinearModel,
+        ranked: FollowupAlignment | None = None,
+        update_target: bool = False,
     ) -> tuple[tuple, FollowupRelation | None, dict[str, list[Sentence]]]:
         a, b = profiles[left], profiles[right]
         pair_mentions = model_mentions[left], model_mentions[right]
@@ -475,6 +560,7 @@ def propose_event_groups(
         if left_doc == right_doc or result[2] == "DIFFERENT_EVENT":
             return result, None, {}
         pair_headers = headers.get(left_doc), headers.get(right_doc)
+        docs = documents[left_doc], documents[right_doc]
         resolved = None
         extra_evidence = {}
         can_refine = result[2] == "SAME_EVENT" or result[-1][0] in {
@@ -484,9 +570,16 @@ def propose_event_groups(
             "update_direction_or_field_unresolved",
         }
         if can_refine:
-            docs = documents[left_doc], documents[right_doc]
             pair_evidence = compare_pair_evidence(*pair_mentions, *docs)
             followup = followup_evidence(*pair_mentions, docs, pair_headers, pair_evidence)
+            aligned = None
+            ambiguous_reply = False
+            if align_followup:
+                aligned = document_matches(left_doc, right_doc).get((left, right))
+                if followup.routing.direct_parent and followup.routing.later is not None:
+                    parent = docs[1 - followup.routing.later]
+                    ambiguous_reply = aligned is None and len(source_profiles[parent.doc_id]) > 1
+            legacy_followup = not ambiguous_reply or followup.title
             probability = grouping_probability(
                 model, pair_features(*pair_mentions) + pair_evidence.features
             )
@@ -494,10 +587,12 @@ def propose_event_groups(
             hint = None
             if status == "SAME_EVENT" and probability >= model.threshold:
                 hint = "checkpoint_with_source_anchor"
-            elif followup.joint:
+            elif followup.joint and legacy_followup:
                 hint = "source_backed_followup"
             suggested = "SAME_EVENT" if hint or result[2] == "SAME_EVENT" else "UNCLEAR"
             resolved = resolve_followup(*pair_mentions, docs, pair_evidence, followup, suggested)
+            if not legacy_followup and resolved.decision in {"SAME_EVENT", "UPDATE_OF"}:
+                resolved = None
             if pair_evidence.conflict:
                 result = (
                     a,
@@ -507,19 +602,74 @@ def propose_event_groups(
                     [],
                     ["conflicting_contextual_identity"],
                 )
-            elif resolved.decision == "UNCLEAR" and resolved.reason != "base":
+            elif resolved and resolved.decision == "UNCLEAR" and resolved.reason != "base":
                 result = a, b, "UNCLEAR", "UNRESOLVED", [], [resolved.reason]
             else:
-                if resolved.reason != "base":
+                if resolved and resolved.reason != "base":
                     hint = hint or "source_backed_followup"
                 if hint:
                     result = _decide(a, b, config, hint, resolved)
-            for mention, doc, title_ids in zip(
-                pair_mentions, docs, followup.title_sentences, strict=True
+            aligned_sentences = ((), ())
+            if result[-1] == ["insufficient_event_identity"]:
+                if aligned is not None:
+                    proposed = _decide(a, b, config, "source_aligned_followup")
+                    if proposed[2] == "SAME_EVENT":
+                        proposed[-1].append(aligned.reason)
+                        result = proposed
+                        aligned_sentences = aligned.sentence_ids
+                elif ambiguous_reply:
+                    result = a, b, "UNCLEAR", "UNRESOLVED", [], ["ambiguous_followup_target"]
+            for mention, doc, title_ids, aligned_ids in zip(
+                pair_mentions, docs, followup.title_sentences, aligned_sentences, strict=True
             ):
                 ids = {s.sentence_id for s in mention_context_sentences(mention, doc)}
                 ids.update(title_ids)
+                ids.update(aligned_ids)
                 extra_evidence[doc.doc_id] = [s for s in doc.sentences if s.sentence_id in ids]
+        unresolved = result[-1][0] in {"insufficient_event_identity", "ambiguous_followup_target"}
+        if ranked is not None and result[2] == "UNCLEAR" and unresolved:
+            proposed = _decide(a, b, config, "reranked_reply_match")
+            if proposed[2] == "SAME_EVENT":
+                result = proposed
+            else:
+                result[-1].append("reranked_target_for_review")
+        if ranked is not None:
+            for mention, doc, ids in zip(pair_mentions, docs, ranked.sentence_ids, strict=True):
+                kept = {s.sentence_id for s in extra_evidence.get(doc.doc_id, mention.sentences)}
+                extra_evidence[doc.doc_id] = [
+                    s for s in doc.sentences if s.sentence_id in kept.union(ids)
+                ]
+        if (
+            update_target
+            and result[2] in {"SAME_EVENT", "UNCLEAR"}
+            and not (a.conditional or b.conditional)
+        ):
+            identity = _decide(a, b, config, "source_aligned_followup")
+            unsafe = {
+                "ambiguous_multi_item_evidence",
+                "specialty_scope_missing_on_one_side",
+                "unsplit_time_interval",
+                "invalid_calendar_date",
+            }
+            if identity[2] != "DIFFERENT_EVENT" and identity[-1][0] not in unsafe:
+                if not compare_pair_evidence(*pair_mentions, *docs).conflict:
+                    update = resolve_followup_update(
+                        *pair_mentions,
+                        docs,
+                        compare_routing(*pair_headers),
+                        target_confirmed=True,
+                        task_relation=_task_relation(a, b),
+                    )
+                    if update is not None:
+                        new, old = (a, b) if update.update_side == 0 else (b, a)
+                        result = (
+                            new,
+                            old,
+                            "UPDATE_OF",
+                            "SAME_TASK",
+                            [update.change],
+                            [update.reason],
+                        )
         if result[2] != "DIFFERENT_EVENT":
             base = "SAME_EVENT" if result[2] == "UPDATE_OF" else result[2]
             scoped = apply_academic_scope(
@@ -548,11 +698,19 @@ def propose_event_groups(
                 result = a, b, "UNCLEAR", "UNRESOLVED", [], ["unclear_academic_scope"]
         return result, resolved, extra_evidence
 
-    def add(left: str, right: str, reasons: list[str]) -> None:
+    def add(
+        left: str,
+        right: str,
+        reasons: list[str],
+        ranked: FollowupAlignment | None = None,
+        update_target: bool = False,
+    ) -> None:
         a, b = profiles[left], profiles[right]
         result, resolved, extra_evidence = _decide(a, b, config), None, {}
         if checkpoint is not None:
-            result, resolved, extra_evidence = refine(left, right, result, checkpoint)
+            result, resolved, extra_evidence = refine(
+                left, right, result, checkpoint, ranked, update_target
+            )
         new, old, decision, relation, changes, why = result
         evidence = [
             EvidenceQuote(
@@ -609,6 +767,56 @@ def propose_event_groups(
                 reasons.append(route)
         if reasons:
             add(left, right, reasons)
+
+    if followup_reranker is not None or resolve_followup_updates:
+        for (left_doc, right_doc), route in routing_candidates.items():
+            if route != "verified_direct_reply":
+                continue
+            left_items, right_items = source_profiles[left_doc], source_profiles[right_doc]
+            established = dict(document_matches(left_doc, right_doc))
+            for first in left_items:
+                for second in right_items:
+                    key = first.mention_id, second.mention_id
+                    pair = proposals[tuple(sorted(key))].pair
+                    if pair.decision in {"SAME_EVENT", "UPDATE_OF"}:
+                        established.setdefault(key, FollowupAlignment("established", ((), ())))
+            ranked = (
+                rerank_followup_mentions(
+                    left_items,
+                    right_items,
+                    compare_routing(headers[left_doc], headers[right_doc]),
+                    followup_reranker,
+                    established,
+                )
+                if followup_reranker is not None
+                else {}
+            )
+            if resolve_followup_updates:
+                established.update(ranked)
+                counts = Counter(ref for key in established for ref in key)
+                unique_targets = {
+                    key for key in established if all(counts[ref] == 1 for ref in key)
+                }
+            else:
+                unique_targets = set()
+            for key in sorted(ranked.keys() | unique_targets):
+                left, right = sorted(key)
+                existing = proposals[left, right]
+                if existing.pair.decision == "DIFFERENT_EVENT":
+                    continue
+                ranked_match = ranked.get(key)
+                if ranked_match is not None and key != (left, right):
+                    ranked_match = FollowupAlignment(
+                        ranked_match.reason,
+                        (ranked_match.sentence_ids[1], ranked_match.sentence_ids[0]),
+                    )
+                add(
+                    left,
+                    right,
+                    existing.candidate_reasons,
+                    ranked_match,
+                    key in unique_targets,
+                )
     neighbors = {ref: set() for ref in profiles}
     for (left, right), proposal in proposals.items():
         if proposal.pair.decision in {"SAME_EVENT", "UPDATE_OF"}:
@@ -629,9 +837,7 @@ def propose_event_groups(
     ordered = [proposals[key] for key in sorted(proposals)]
     assembly = build_event_groups(notices, annotations, [p.pair for p in ordered], time_boundaries)
     return AutomaticGroupingResult(
-        rule_version="automatic-event-grouping-model-assisted-v1"
-        if checkpoint is not None
-        else "automatic-event-grouping-v1",
+        rule_version=rule_version,
         config=config,
         generated_at=generated_at,
         compared_pairs=len(profiles) * (len(profiles) - 1) // 2,
