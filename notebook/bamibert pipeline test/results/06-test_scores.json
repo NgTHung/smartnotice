@@ -1,0 +1,190 @@
+{
+  "span": {
+    "micro": {
+      "precision": 0.2110016420361248,
+      "recall": 0.1820113314447592,
+      "f1": 0.19543726235741446,
+      "matched": 257,
+      "predicted": 1218,
+      "expected": 1412
+    },
+    "by_type": {
+      "ACTION": {
+        "precision": 0.18658892128279883,
+        "recall": 0.13675213675213677,
+        "f1": 0.15782983970406905,
+        "matched": 64,
+        "predicted": 343,
+        "expected": 468
+      },
+      "TIME": {
+        "precision": 0.35668789808917195,
+        "recall": 0.3783783783783784,
+        "f1": 0.36721311475409835,
+        "matched": 112,
+        "predicted": 314,
+        "expected": 296
+      },
+      "AUDIENCE": {
+        "precision": 0.2569444444444444,
+        "recall": 0.19473684210526315,
+        "f1": 0.2215568862275449,
+        "matched": 37,
+        "predicted": 144,
+        "expected": 190
+      },
+      "CONDITION": {
+        "precision": 0.1791044776119403,
+        "recall": 0.125,
+        "f1": 0.147239263803681,
+        "matched": 12,
+        "predicted": 67,
+        "expected": 96
+      },
+      "CHANNEL": {
+        "precision": 0.13793103448275862,
+        "recall": 0.12631578947368421,
+        "f1": 0.13186813186813187,
+        "matched": 24,
+        "predicted": 174,
+        "expected": 190
+      },
+      "DOCUMENT": {
+        "precision": 0.045454545454545456,
+        "recall": 0.046511627906976744,
+        "f1": 0.04597701149425287,
+        "matched": 8,
+        "predicted": 176,
+        "expected": 172
+      }
+    }
+  },
+  "link": {
+    "micro": {
+      "precision": 0.15671641791044777,
+      "recall": 0.0731070496083551,
+      "f1": 0.09970326409495549,
+      "matched": 84,
+      "predicted": 536,
+      "expected": 1149
+    },
+    "by_role": {
+      "START": {
+        "precision": 0.16129032258064516,
+        "recall": 0.08196721311475409,
+        "f1": 0.10869565217391304,
+        "matched": 5,
+        "predicted": 31,
+        "expected": 61
+      },
+      "DEADLINE": {
+        "precision": 0.2891566265060241,
+        "recall": 0.17266187050359713,
+        "f1": 0.21621621621621623,
+        "matched": 24,
+        "predicted": 83,
+        "expected": 139
+      },
+      "EVENT_TIME": {
+        "precision": 0.11627906976744186,
+        "recall": 0.04424778761061947,
+        "f1": 0.0641025641025641,
+        "matched": 5,
+        "predicted": 43,
+        "expected": 113
+      },
+      "AUDIENCE": {
+        "precision": 0.16793893129770993,
+        "recall": 0.06626506024096386,
+        "f1": 0.09503239740820735,
+        "matched": 22,
+        "predicted": 131,
+        "expected": 332
+      },
+      "CONDITION": {
+        "precision": 0.19298245614035087,
+        "recall": 0.07971014492753623,
+        "f1": 0.11282051282051282,
+        "matched": 11,
+        "predicted": 57,
+        "expected": 138
+      },
+      "CHANNEL": {
+        "precision": 0.1322314049586777,
+        "recall": 0.08333333333333333,
+        "f1": 0.10223642172523961,
+        "matched": 16,
+        "predicted": 121,
+        "expected": 192
+      },
+      "DOCUMENT": {
+        "precision": 0.014285714285714285,
+        "recall": 0.005747126436781609,
+        "f1": 0.00819672131147541,
+        "matched": 1,
+        "predicted": 70,
+        "expected": 174
+      }
+    },
+    "macro_f1": 0.10104292653687551,
+    "time_role_macro_f1": 0.12967147749756444
+  },
+  "event": {
+    "precision": 0.01749271137026239,
+    "recall": 0.01282051282051282,
+    "f1": 0.014796547472256474,
+    "matched": 6,
+    "predicted": 343,
+    "expected": 468
+  },
+  "dates": {
+    "explicit": {
+      "expected_links": 188,
+      "matched_links": 20,
+      "correct_dates": 16,
+      "matched_date_accuracy": 0.8,
+      "matched_inferred_flag_accuracy": 1.0,
+      "end_to_end_date_accuracy": 0.0851063829787234
+    },
+    "inferred": {
+      "expected_links": 3,
+      "matched_links": 0,
+      "correct_dates": 0,
+      "matched_date_accuracy": null,
+      "matched_inferred_flag_accuracy": null,
+      "end_to_end_date_accuracy": 0.0
+    },
+    "unresolved": {
+      "expected_links": 122,
+      "matched_links": 14,
+      "correct_dates": 14,
+      "matched_date_accuracy": 1.0,
+      "matched_inferred_flag_accuracy": 1.0,
+      "end_to_end_date_accuracy": 0.11475409836065574
+    }
+  },
+  "boundaries": {
+    "untyped": {
+      "precision": 0.21187139323990106,
+      "recall": 0.1820113314447592,
+      "f1": 0.19580952380952382,
+      "matched": 257,
+      "predicted": 1213,
+      "expected": 1412
+    },
+    "correct_type_sets": 253,
+    "matched_boundaries": 257
+  },
+  "applicability": {
+    "matched_action_events": 64,
+    "expected_events": 468,
+    "joint_exact_event_profile": {
+      "precision": 0.01032555879494655,
+      "recall": 0.007567663817663817,
+      "f1": 0.008734073160706946,
+      "matched": 85,
+      "predicted": 8232,
+      "expected": 11232
+    }
+  }
+}

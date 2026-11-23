@@ -1,0 +1,105 @@
+{
+  "annotated_events": {
+    "examples": 8568,
+    "macro_f1": 0.670700724459115,
+    "classes": {
+      "APPLIES": {
+        "precision": 0.7822784810126582,
+        "recall": 0.6854480922803904,
+        "f1-score": 0.730669188933554,
+        "support": 2254.0
+      },
+      "NOT_APPLIES": {
+        "precision": 0.6808252427184466,
+        "recall": 0.3596153846153846,
+        "f1-score": 0.47063758389261745,
+        "support": 1560.0
+      },
+      "UNCLEAR": {
+        "precision": 0.7394695787831513,
+        "recall": 0.8973496003365586,
+        "f1-score": 0.8107954005511736,
+        "support": 4754.0
+      }
+    },
+    "labels": [],
+    "confusion": [
+      [
+        1545,
+        43,
+        666
+      ],
+      [
+        162,
+        561,
+        837
+      ],
+      [
+        268,
+        220,
+        4266
+      ]
+    ]
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "loss": 0.9259776993375409,
+      "validation_macro_f1": 0.5345553481740057
+    },
+    {
+      "epoch": 2,
+      "loss": 0.7061702637235735,
+      "validation_macro_f1": 0.670700724459115
+    }
+  ],
+  "calibration": {
+    "temperature": 0.8017097115516663,
+    "validation_nll_before": 0.5719763040542603,
+    "validation_nll_after": 0.5622993111610413,
+    "chosen": {
+      "threshold": 0.6,
+      "accepted": 6272,
+      "coverage": 0.7320261437908496,
+      "accepted_accuracy": 0.8461415767669678
+    },
+    "validation_operating_points": [
+      {
+        "threshold": 0.0,
+        "accepted": 8568,
+        "coverage": 1.0,
+        "accepted_accuracy": 0.743697464466095
+      },
+      {
+        "threshold": 0.5,
+        "accepted": 7771,
+        "coverage": 0.9069794584500467,
+        "accepted_accuracy": 0.7789216041564941
+      },
+      {
+        "threshold": 0.6,
+        "accepted": 6272,
+        "coverage": 0.7320261437908496,
+        "accepted_accuracy": 0.8461415767669678
+      },
+      {
+        "threshold": 0.7,
+        "accepted": 5307,
+        "coverage": 0.6193977591036415,
+        "accepted_accuracy": 0.8980591893196106
+      },
+      {
+        "threshold": 0.8,
+        "accepted": 4417,
+        "coverage": 0.5155228758169934,
+        "accepted_accuracy": 0.9282318353652954
+      },
+      {
+        "threshold": 0.9,
+        "accepted": 2673,
+        "coverage": 0.3119747899159664,
+        "accepted_accuracy": 0.9910213351249695
+      }
+    ]
+  }
+}
