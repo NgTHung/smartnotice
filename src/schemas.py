@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 SpanLabel = Literal["ACTION", "TIME", "AUDIENCE", "CONDITION", "CHANNEL", "DOCUMENT"]
 TimeRole = Literal["START", "DEADLINE", "EVENT_TIME"]
@@ -82,6 +82,46 @@ class Span(Record):
     start: int = Field(ge=0)
     end: int = Field(gt=0)
     text: str
+
+
+class SpanCandidate(Record):
+    """A proposed label and half-open Python character offsets in prepared text."""
+
+    doc_id: str
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    start: int = Field(ge=0, strict=True)
+    end: int = Field(gt=0, strict=True)
+    text: str = Field(min_length=1, repr=False)
+    proposed_label: SpanLabel
+    rule_ids: list[str] = Field(min_length=1)
+    generator_version: str = Field(min_length=1)
+
+
+class SpanReview(Record):
+    """Attest that someone checked all six span labels in one specific annotation."""
+
+    doc_id: str
+    text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    annotation_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reviewer_id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    reviewed_at: AwareDatetime
+    annotation_origin: Literal["independent", "adjudicated", "machine_assisted"]
+
+
+class CandidateTarget(Record):
+    """An exact-match target and diagnostic for one candidate key."""
+
+    doc_id: str
+    text_sha256: str
+    start: int
+    end: int
+    proposed_label: SpanLabel
+    generator_version: str
+    annotation_sha256: str | None
+    target: Literal[0, 1] | None
+    match_status: Literal[
+        "exact", "wrong_label", "boundary", "overlap_other_label", "no_overlap", "unverified"
+    ]
 
 
 class Argument(Record):
