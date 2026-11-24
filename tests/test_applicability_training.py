@@ -4,7 +4,10 @@ from hashlib import sha256
 
 import pytest
 from applicability_fixture import make_corpus
+from scipy import sparse
+from sklearn.preprocessing import MaxAbsScaler
 from smartnotice.io import read_jsonl, write_jsonl
+from smartnotice.modeling import applicability_training
 from smartnotice.modeling.applicability_training import (
     TrainingConfig,
     assign_folds,
@@ -296,3 +299,167 @@ def test_final_fit_respects_train_sources(tmp_path, paths):
     counts = _json(out / "record.json")["final_fit"]["counts"]
     assert counts["source_pairs"]["email"] == 0
     assert counts["source_pairs"]["web"] > 0
+
+
+def test_logreg_run_writes_complete_record(tmp_path, paths):
+    logreg = _run(
+        _config(model="logreg", params={}, param_grid=[{"C": 0.5}, {"C": 2.0}]),
+        paths,
+        tmp_path / "logreg",
+    )
+    lightgbm = _run(_config(), paths, tmp_path / "lightgbm")
+    assert (logreg / "folds.jsonl").read_bytes() == (lightgbm / "folds.jsonl").read_bytes()
+    features = _json(logreg / "feature_names.json")
+    assert features == _json(lightgbm / "feature_names.json")
+    record = _json(logreg / "record.json")
+    assert record["model"] == "logreg"
+    assert record["default_params"] == {"C": 1.0, "max_iter": 1000, "solver": "lbfgs"}
+    selection = record["parameter_selection"]
+    assert record["selection_score_is_not_held_out"] is True
+    assert [trial["params"]["C"] for trial in selection["trials"]] == [0.5, 2.0]
+    assert record["params"] == selection["trials"][selection["selected_index"]]["params"]
+    metrics = _json(logreg / "metrics.json")
+    assert metrics["model"] == "logreg"
+    experiment = "mix=email,web"
+    assert (
+        metrics["experiments"][experiment]["seeds"][0]["oof"]["overall"]["event"]["n_pairs"] == 36
+    )
+    predictions = read_jsonl(logreg / "oof_predictions.jsonl")
+    assert len(predictions) == 36
+    label_order = ["APPLIES", "NOT_APPLIES", "UNCLEAR"]
+    for row in predictions:
+        assert list(row["probabilities"]) == label_order
+        assert sum(row["probabilities"].values()) == pytest.approx(1.0)
+    importances = _json(logreg / "importances.json")["experiments"][experiment]
+    for fold, names in zip(importances, features["experiments"][experiment], strict=True):
+        assert list(fold["coefficients"]) == label_order
+        assert all(
+            len(values) == len(names["features"]) for values in fold["coefficients"].values()
+        )
+
+
+def test_logreg_same_seed_same_predictions(tmp_path, paths):
+    config = _config(model="logreg", params={})
+    first = _run(config, paths, tmp_path / "first")
+    second = _run(config, paths, tmp_path / "second")
+    assert (first / "oof_predictions.jsonl").read_bytes() == (
+        second / "oof_predictions.jsonl"
+    ).read_bytes()
+
+
+def test_logreg_scaler_fits_training_fold_only(tmp_path, corpus, monkeypatch):
+    *_, pairs, assignments = corpus
+    distant_doc = assignments[0]["doc_id"]
+    for pair in pairs:
+        if pair["doc_id"] == distant_doc and pair["profile_id"] == "older":
+            pair["profile"]["cohort"] = 2000
+    paths = _input_paths(tmp_path, corpus)
+    fitted_maxima = []
+    original_fit = MaxAbsScaler.fit
+
+    def record_fit(scaler, matrix, *args, **kwargs):
+        assert sparse.issparse(matrix)
+        fitted = original_fit(scaler, matrix, *args, **kwargs)
+        fitted_maxima.append(fitted.max_abs_.tolist())
+        return fitted
+
+    monkeypatch.setattr(MaxAbsScaler, "fit", record_fit)
+    out = _run(_config(model="logreg", params={}), paths, tmp_path / "logreg")
+    distant_group = assignments[0]["group_id"]
+    held_out = next(
+        row["fold"] for row in read_jsonl(out / "folds.jsonl") if row["group_id"] == distant_group
+    )
+    scaled_features = applicability_training.SCALED_FEATURES
+    assert len(fitted_maxima) == 3
+    assert all(len(maxima) == len(scaled_features) for maxima in fitted_maxima)
+    distance = scaled_features.index("cohort_distance")
+    assert [maxima[distance] for maxima in fitted_maxima] == [
+        1.0 if fold == held_out else 24.0 for fold in range(3)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("model", "option", "invalid"),
+    [
+        ("logreg", "params", {"num_leaves": 5}),
+        ("logreg", "param_grid", {"learning_rate": 0.1}),
+        ("logreg", "params", {"random_state": 20}),
+        ("lightgbm", "params", {"C": 0.5}),
+        ("lightgbm", "param_grid", {"class_weight": "balanced"}),
+    ],
+)
+def test_logreg_rejects_lightgbm_params(model, option, invalid):
+    options = {"model": model, "params": {}, option: invalid if option == "params" else [invalid]}
+    with pytest.raises(ValueError, match=rf"parameters.*\b{next(iter(invalid))}\b"):
+        _config(**options)
+
+
+def test_logreg_fit_final_writes_json_model(tmp_path, paths, capsys):
+    from smartnotice.cli import main
+
+    out = tmp_path / "logreg"
+    main(
+        [
+            "train-applicability",
+            "--pairs",
+            str(paths["pairs_path"]),
+            "--notices",
+            str(paths["notices_path"]),
+            "--assignments",
+            str(paths["assignments_path"]),
+            "--audience-source",
+            "human",
+            "--audience-annotations",
+            str(paths["annotations_path"]),
+            "--model",
+            "logreg",
+            "--allow-synthetic",
+            "--folds",
+            "3",
+            "--seeds",
+            "42",
+            "--fit-final",
+            "--output-dir",
+            str(out),
+        ]
+    )
+    assert capsys.readouterr().out.strip() == str(out)
+    assert {path.name for path in out.iterdir()} == {
+        "record.json",
+        "folds.jsonl",
+        "oof_predictions.jsonl",
+        "metrics.json",
+        "feature_names.json",
+        "importances.json",
+        "model.json",
+        "tfidf.json",
+    }
+    model = _json(out / "model.json")
+    assert model["classes"] == ["APPLIES", "NOT_APPLIES", "UNCLEAR"]
+    assert model["feature_names"] == _json(out / "feature_names.json")["final"]
+    assert model["scaler"]["max_abs"]["cohort_distance"] == 1.0
+    assert model["scaler"]["max_abs"]["audience_chars"] == len("sinh viên K24")
+    assert set(model["scaler"]["max_abs"]) == set(applicability_training.SCALED_FEATURES)
+    assert len(model["coef"]) == len(model["intercept"]) == 3
+    assert all(len(row) == len(model["feature_names"]) for row in model["coef"])
+    assert _json(out / "record.json")["final_fit"]["model_class_order"] == model["classes"]
+    assert _json(out / "importances.json")["final"] == dict(
+        zip(model["classes"], model["coef"], strict=True)
+    )
+
+
+@pytest.mark.parametrize("absent", [{"NOT_APPLIES"}, {"UNCLEAR"}, {"APPLIES", "UNCLEAR"}])
+def test_logreg_missing_class_keeps_probability_columns(tmp_path, corpus, absent):
+    *_, pairs, _ = corpus
+    pairs[:] = [pair for pair in pairs if pair["label"] not in absent]
+    paths = _input_paths(tmp_path, corpus)
+    out = _run(_config(model="logreg", params={}, fit_final=True), paths, tmp_path / "absent")
+    labels = ["APPLIES", "NOT_APPLIES", "UNCLEAR"]
+    for row in read_jsonl(out / "oof_predictions.jsonl"):
+        probabilities = row["probabilities"]
+        assert list(probabilities) == labels
+        assert all(probabilities[label] == 0.0 for label in absent)
+        assert sum(probabilities.values()) == pytest.approx(1.0)
+    model = _json(out / "model.json")
+    assert model["classes"] == [label for label in labels if label not in absent]
+    assert len(model["coef"]) == len(model["intercept"]) == len(model["classes"])

@@ -125,8 +125,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     profile_parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     train = commands.add_parser(
-        "train-applicability", help="Train and score LightGBM on grouped applicability pairs"
+        "train-applicability", help="Train and score models on grouped applicability pairs"
     )
+    train.add_argument("--model", choices=["lightgbm", "logreg"], default="lightgbm")
     train.add_argument("--pairs", type=Path, required=True)
     train.add_argument("--notices", type=Path, required=True)
     train.add_argument("--assignments", type=Path, required=True)
@@ -138,7 +139,9 @@ def main(argv: list[str] | None = None) -> None:
     train.add_argument("--folds", type=int)
     train.add_argument("--tfidf", action=argparse.BooleanOptionalAction, default=True)
     train.add_argument("--no-source-feature", dest="source_feature", action="store_false")
-    train.add_argument("--params", type=Path, help="JSON object of LightGBM parameters")
+    train.add_argument(
+        "--params", type=Path, help="JSON object of parameters for the selected model"
+    )
     train.add_argument("--param-grid", type=Path, help="JSON list of parameter override objects")
     train.add_argument("--weighting", choices=["event", "pair"], default="event")
     train.add_argument("--fit-final", action="store_true")
@@ -317,6 +320,7 @@ def main(argv: list[str] | None = None) -> None:
             from smartnotice.modeling.lexicon import DEFAULT_LEXICON_PATH
 
             option_names = (
+                "model",
                 "audience_source",
                 "train_sources",
                 "learning_curve",

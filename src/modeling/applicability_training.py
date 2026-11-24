@@ -1,4 +1,4 @@
-"""Train LightGBM applicability models on grouped train/validation pairs."""
+"""Train applicability models on grouped train/validation pairs."""
 
 import json
 import math
@@ -19,7 +19,10 @@ import numpy as np
 from lightgbm import LGBMClassifier
 from lightgbm.basic import LightGBMError
 from pydantic import Field, ValidationError, model_validator
+from scipy import sparse
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GroupKFold
+from sklearn.preprocessing import MaxAbsScaler
 from smartnotice.io import write_jsonl
 from smartnotice.modeling.applicability_features import (
     ApplicabilityInput,
@@ -48,7 +51,7 @@ _REASON_SLICES = {
 _MISMATCH_REASONS = tuple(
     f"mismatched_{field}" for field in ("cohort", "degree_level", "major", "program", "status")
 )
-_DEFAULT_PARAMS = {
+_LIGHTGBM_DEFAULT_PARAMS = {
     "boosting_type": "gbdt",
     "n_estimators": 100,
     "learning_rate": 0.05,
@@ -59,6 +62,25 @@ _DEFAULT_PARAMS = {
     "force_col_wise": True,
     "verbosity": -1,
 }
+_LOGREG_DEFAULT_PARAMS = {"C": 1.0, "max_iter": 1000, "solver": "lbfgs"}
+_LIGHTGBM_FIXED_PARAMS = {"objective": "multiclass", "num_class": len(_LABELS)}
+_MODEL_DEFAULTS = {"lightgbm": _LIGHTGBM_DEFAULT_PARAMS, "logreg": _LOGREG_DEFAULT_PARAMS}
+_LOGREG_PARAMS = LogisticRegression().get_params().keys() - {"multi_class", "n_jobs"}
+_LOGREG_ONLY_PARAMS = _LOGREG_PARAMS - {"random_state", "verbose"}
+SCALED_FEATURES: tuple[str, ...] = (
+    "cue_cohort_count",
+    "cue_degree_level_count",
+    "cue_major_count",
+    "cue_program_count",
+    "cue_status_count",
+    "cue_excluded_status_count",
+    "n_audience",
+    "n_condition",
+    "audience_chars",
+    "cohort_distance",
+    "n_mentioned",
+    "n_required_unknown",
+)
 _RESERVED_PARAMS = {
     "objective",
     "objective_type",
@@ -79,6 +101,7 @@ _RUN_FILES = (
     "feature_names.json",
     "importances.json",
     "model.txt",
+    "model.json",
     "tfidf.json",
 )
 Seed = Annotated[int, Field(ge=0, le=2**31 - 1)]
@@ -89,6 +112,7 @@ class TrainingConfig(Record):
     """Configure grouped cross-validation, training filters, and optional refit."""
 
     audience_source: AudienceSource
+    model: Literal["lightgbm", "logreg"] = "lightgbm"
     train_sources: list[Literal["email", "web"]] = Field(
         default_factory=lambda: list(_SOURCES), min_length=1
     )
@@ -115,7 +139,14 @@ class TrainingConfig(Record):
             raise ValueError("learning_curve requires web in train_sources")
         for params in [self.params, *(self.param_grid or [])]:
             if protected := _RESERVED_PARAMS.intersection(params):
-                raise ValueError(f"Training sets the LightGBM parameters {sorted(protected)}")
+                raise ValueError(f"Training sets the {self.model} parameters {sorted(protected)}")
+            if self.model == "logreg":
+                if invalid := params.keys() - _LOGREG_PARAMS:
+                    raise ValueError(f"Invalid logreg parameters: {sorted(invalid)}")
+                if params.get("solver", "lbfgs") != "lbfgs":
+                    raise ValueError("The logreg solver must be lbfgs")
+            elif invalid := params.keys() & _LOGREG_ONLY_PARAMS:
+                raise ValueError(f"Invalid lightgbm parameters: {sorted(invalid)}")
         return self
 
 
@@ -413,6 +444,52 @@ def _fold_indices(
     return np.flatnonzero(~held_out & selected), np.flatnonzero(held_out)
 
 
+@dataclass
+class _FittedLogReg:
+    scaler: MaxAbsScaler
+    scaled_columns: list[int]
+    classes_: np.ndarray
+    estimator: LogisticRegression | None = None
+
+    def _scale(self, matrix: sparse.csr_matrix) -> sparse.csr_matrix:
+        weights = np.ones(matrix.shape[1], dtype=matrix.dtype)
+        weights[self.scaled_columns] = 1 / self.scaler.scale_
+        return matrix.multiply(weights).tocsr()
+
+    def _probabilities(self, matrix: sparse.csr_matrix) -> np.ndarray:
+        if self.estimator is None:
+            return np.ones((matrix.shape[0], 1))
+        return self.estimator.predict_proba(self._scale(matrix))
+
+    def _coefficients(self, feature_count: int) -> tuple[np.ndarray, np.ndarray]:
+        if self.estimator is None:
+            return np.zeros((1, feature_count)), np.zeros(1)
+        coef, intercept = self.estimator.coef_, self.estimator.intercept_
+        if len(self.classes_) == 2:
+            # Split the binary log-odds between classes so softmax reproduces predict_proba.
+            coef = np.vstack((-0.5 * coef, 0.5 * coef))
+            intercept = np.concatenate((-0.5 * intercept, 0.5 * intercept))
+        return coef, intercept
+
+
+def _fit_logreg(
+    matrix: sparse.csr_matrix,
+    feature_names: list[str],
+    labels: np.ndarray,
+    weights: np.ndarray,
+    params: dict,
+    seed: int,
+) -> _FittedLogReg:
+    columns = [feature_names.index(name) for name in SCALED_FEATURES]
+    scaler = MaxAbsScaler().fit(matrix[:, columns])
+    model = _FittedLogReg(scaler, columns, np.unique(labels))
+    # A one-class fold has a constant probability because there is no decision boundary.
+    if len(model.classes_) > 1:
+        model.estimator = LogisticRegression(random_state=seed, **params)
+        model.estimator.fit(model._scale(matrix), labels, sample_weight=weights)
+    return model
+
+
 def _fit(
     data: _RunData,
     indices: np.ndarray,
@@ -420,16 +497,20 @@ def _fit(
     params: dict,
     seed: int,
     lexicon: Lexicon,
-) -> tuple[FeatureBuilder, LGBMClassifier, int]:
+) -> tuple[FeatureBuilder, LGBMClassifier | _FittedLogReg, int]:
     items = [data.inputs[i] for i in indices]
     builder = FeatureBuilder(lexicon, tfidf=config.tfidf, source_feature=config.source_feature)
     matrix = builder.fit(items).transform(items)
     weights = data.weights[indices] if config.weighting == "event" else np.ones(len(indices))
     labels = data.label_ids[indices]
     majority = int(np.bincount(labels, weights=weights, minlength=len(_LABELS)).argmax())
-    model = LGBMClassifier(
-        objective="multiclass", num_class=len(_LABELS), random_state=seed, **params
-    )
+    if config.model == "logreg":
+        try:
+            model = _fit_logreg(matrix, builder.feature_names, labels, weights, params, seed)
+        except ValueError as exc:
+            raise ValueError(f"Logistic regression fit failed for seed {seed}: {exc}") from None
+        return builder, model, majority
+    model = LGBMClassifier(random_state=seed, **_LIGHTGBM_FIXED_PARAMS, **params)
     try:
         model.fit(matrix, labels, sample_weight=weights)
     except LightGBMError as exc:
@@ -438,15 +519,21 @@ def _fit(
 
 
 def _predict(
-    data: _RunData, indices: np.ndarray, builder: FeatureBuilder, model: LGBMClassifier
+    data: _RunData,
+    indices: np.ndarray,
+    builder: FeatureBuilder,
+    model: LGBMClassifier | _FittedLogReg,
 ) -> np.ndarray:
     matrix = builder.transform([data.inputs[i] for i in indices])
-    raw = model.booster_.predict(matrix)
-    # LightGBM packs observed classes into the first columns. Drop unused columns
-    # and return probabilities in the persisted label order even when a fold lacks a class.
-    observed = raw[:, : len(model.classes_)]
+    if isinstance(model, _FittedLogReg):
+        observed = model._probabilities(matrix)
+    else:
+        # LightGBM packs observed classes into the first columns and leaves extra columns.
+        raw = model.booster_.predict(matrix)
+        observed = raw[:, : len(model.classes_)]
+        observed = observed / observed.sum(axis=1, keepdims=True)
     probabilities = np.zeros((len(indices), len(_LABELS)))
-    probabilities[:, model.classes_] = observed / observed.sum(axis=1, keepdims=True)
+    probabilities[:, model.classes_] = observed
     return probabilities
 
 
@@ -530,6 +617,44 @@ def _gain(model: LGBMClassifier) -> list[float]:
     return model.booster_.feature_importance(importance_type="gain").tolist()
 
 
+def _importance(model: LGBMClassifier | _FittedLogReg, feature_count: int) -> dict:
+    if isinstance(model, _FittedLogReg):
+        coef, _ = model._coefficients(feature_count)
+        return {
+            "coefficients": {
+                _LABELS[label]: row.tolist()
+                for label, row in zip(model.classes_, coef, strict=True)
+            }
+        }
+    return {"gain": _gain(model)}
+
+
+def _save_final_model(
+    output: Path, model: LGBMClassifier | _FittedLogReg, feature_names: list[str]
+) -> tuple[list[str | None], list[float] | dict[str, list[float]]]:
+    classes = [_LABELS[i] for i in model.classes_]
+    if isinstance(model, _FittedLogReg):
+        coef, intercept = model._coefficients(len(feature_names))
+        coefficients = coef.tolist()
+        _write_json(
+            output / "model.json",
+            {
+                "coef": coefficients,
+                "intercept": intercept.tolist(),
+                "classes": classes,
+                "feature_names": feature_names,
+                "scaler": {
+                    "max_abs": dict(
+                        zip(SCALED_FEATURES, model.scaler.max_abs_.tolist(), strict=True)
+                    )
+                },
+            },
+        )
+        return classes, dict(zip(classes, coefficients, strict=True))
+    model.booster_.save_model(str(output / "model.txt"))
+    return classes + [None] * (len(_LABELS) - len(classes)), _gain(model)
+
+
 def _write_oof(
     stream: TextIO,
     data: _RunData,
@@ -590,7 +715,7 @@ def _cross_validate(
                 }
             )
             result.names.append(identity | {"features": builder.feature_names})
-            result.importances.append(identity | {"gain": _gain(model)})
+            result.importances.append(identity | _importance(model, len(builder.feature_names)))
             baseline = seed_baseline[held_out]
             fold_metrics.append(identity | _evaluate(data, held_out, pred, baseline))
         if stream is None:
@@ -610,7 +735,7 @@ def _select_parameters(
     experiments: dict[str, list[_Fold]],
     memberships: dict[int, np.ndarray],
 ) -> tuple[dict, dict | None]:
-    base = _DEFAULT_PARAMS | config.params
+    base = _MODEL_DEFAULTS[config.model] | config.params
     if config.param_grid is None:
         return base, None
     experiment, folds = next(iter(experiments.items()))
@@ -742,6 +867,7 @@ def run_training(
             created_at=started.isoformat(),
             config_sha256=config_digest,
             config=config_values,
+            model=config.model,
             inputs=input_records,
             label_origin=_LABEL_ORIGIN,
             label_order=list(_LABELS),
@@ -770,9 +896,9 @@ def run_training(
 
         fold_rows, memberships, experiments = _plan_folds(data, config)
         params, selection = _select_parameters(data, config, lexicon, experiments, memberships)
-        fixed_params = {"objective": "multiclass", "num_class": len(_LABELS)}
+        fixed_params = _LIGHTGBM_FIXED_PARAMS if config.model == "lightgbm" else {}
         record.update(
-            default_params=_DEFAULT_PARAMS | fixed_params,
+            default_params=_MODEL_DEFAULTS[config.model] | fixed_params,
             params=params | fixed_params,
             parameter_selection=selection,
             selection_score_is_not_held_out=selection is not None,
@@ -781,7 +907,12 @@ def run_training(
             final_fit=None,
         )
         write_jsonl(output / "folds.jsonl", fold_rows)
-        metrics = {"label_origin": _LABEL_ORIGIN, "label_order": list(_LABELS), "experiments": {}}
+        metrics = {
+            "model": config.model,
+            "label_origin": _LABEL_ORIGIN,
+            "label_order": list(_LABELS),
+            "experiments": {},
+        }
         names = {"experiments": {}, "final": None}
         importances = {"experiments": {}, "final": None}
         with (output / "oof_predictions.jsonl").open("w", encoding="utf-8", newline="\n") as stream:
@@ -800,15 +931,15 @@ def run_training(
             seed = config.seeds[0]
             indices = np.flatnonzero(np.isin(data.sources, config.train_sources))
             builder, model, _ = _fit(data, indices, config, params, seed, lexicon)
-            model.booster_.save_model(str(output / "model.txt"))
+            class_order, importances["final"] = _save_final_model(
+                output, model, builder.feature_names
+            )
             _write_json(output / "tfidf.json", builder.tfidf_state())
             names["final"] = builder.feature_names
-            importances["final"] = _gain(model)
-            native_classes = [_LABELS[i] for i in model.classes_]
             record["final_fit"] = {
                 "seed": seed,
                 "counts": _counts(data, indices),
-                "model_class_order": native_classes + [None] * (len(_LABELS) - len(native_classes)),
+                "model_class_order": class_order,
             }
         _write_json(output / "metrics.json", metrics)
         _write_json(output / "feature_names.json", names)
