@@ -30,7 +30,7 @@
     "graduated": ["đã tốt nghiệp"]
   },
   "exclusion": ["trừ", "ngoại trừ", "không bao gồm", "không áp dụng"],
-  "all_students": ["toàn thể sinh viên", "tất cả sinh viên", "mọi sinh viên", "toàn thể người học", "tất cả người học", "toàn thể học viên"],
+  "all_students": ["toàn thể", "tất cả sinh viên", "mọi sinh viên", "tất cả người học"],
   "outside_population": ["cán bộ", "giảng viên", "nhân viên", "phụ huynh"],
   "student_terms": ["sinh viên", "học viên", "người học", "nghiên cứu sinh"],
   "unrepresented": ["lớp trưởng", "ban cán sự", "hệ chính quy", "năm cuối"],
