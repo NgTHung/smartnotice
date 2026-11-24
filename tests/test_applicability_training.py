@@ -289,3 +289,10 @@ def test_cli_train_applicability(tmp_path, paths, capsys):
     assert record["inputs"]["params"]["sha256"] == sha256(params_file.read_bytes()).hexdigest()
     assert record["inputs"]["param_grid"]["sha256"] == sha256(grid_file.read_bytes()).hexdigest()
     assert _json(output / "tfidf.json") is None
+
+
+def test_final_fit_respects_train_sources(tmp_path, paths):
+    out = _run(_config(fit_final=True, train_sources=["web"]), paths, tmp_path / "run")
+    counts = _json(out / "record.json")["final_fit"]["counts"]
+    assert counts["source_pairs"]["email"] == 0
+    assert counts["source_pairs"]["web"] > 0

@@ -798,7 +798,7 @@ def run_training(
                 importances["experiments"][key] = result.importances
         if config.fit_final:
             seed = config.seeds[0]
-            indices = np.arange(len(data.inputs))
+            indices = np.flatnonzero(np.isin(data.sources, config.train_sources))
             builder, model, _ = _fit(data, indices, config, params, seed, lexicon)
             model.booster_.save_model(str(output / "model.txt"))
             _write_json(output / "tfidf.json", builder.tfidf_state())

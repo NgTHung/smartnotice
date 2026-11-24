@@ -285,3 +285,21 @@ def test_source_feature_toggle(cue_item, lexicon):
     assert matrix[0, with_source.feature_names.index("source_type_web")] == 1
     assert matrix[0, with_source.feature_names.index("source_type_email")] == 0
     assert without_source.tfidf_state() is None
+
+
+def test_exclusion_list_continues_after_comma(cue_item, lexicon):
+    item = cue_item.model_copy(
+        update={"audience_texts": ["tất cả sinh viên, trừ sinh viên bảo lưu, đình chỉ"]}
+    )
+    cues = extract_audience_cues(item, lexicon)
+    assert cues.excluded_statuses == {"on_leave", "suspended"}
+    assert cues.statuses == set()
+    assert cues.all_students
+
+
+def test_disjoint_open_cohort_ranges_are_unresolved(cue_item, lexicon):
+    item = cue_item.model_copy(update={"audience_texts": ["K22 trở đi", "K19 về trước"]})
+    cues = extract_audience_cues(item, lexicon)
+    assert cues.cohort_min is None and cues.cohort_max is None
+    assert cues.cohort_unresolved
+    assert cross_features(cues, item.model_copy(update={"cohort": 2020}))["cohort_mentioned"] == 1

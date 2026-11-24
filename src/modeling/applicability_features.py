@@ -142,7 +142,9 @@ _STUDY_CUE = re.compile(
     rf"(?:\s+(?P<bound>{_BOUND})\b)?"
 )
 _CLASS_CODE = re.compile(r"\blớp\s+(?=[a-z0-9]*[a-z])(?=[a-z0-9]*[0-9])[a-z0-9]+\b")
-_CLAUSE_BREAK = re.compile(r"[,;.!?\n]|\b(?:nhưng|riêng)\b")
+# Commas stay inside a clause so an exclusion list such as "trừ ... bảo lưu, đình chỉ"
+# keeps every listed status excluded.
+_CLAUSE_BREAK = re.compile(r"[;.!?\n]|\b(?:nhưng|riêng)\b")
 
 
 @dataclass
@@ -212,6 +214,10 @@ def _read_cohorts(cues: AudienceCues, texts: list[str], reference_date: date | N
         lower, upper = zip(*ranges, strict=True)
         cues.cohort_min = None if None in lower else min(lower)
         cues.cohort_max = None if None in upper else max(upper)
+        # Opposite open ranges, such as "K22 trở đi" and "K19 về trước", have no
+        # single enclosing range; keep the cohort mention without inventing bounds.
+        if cues.cohort_min is None and cues.cohort_max is None:
+            cues.cohort_unresolved = True
 
 
 @lru_cache
