@@ -17,6 +17,7 @@ The BamiBERT system belongs to another owner. This work only offers suggestions 
 - Measure whether email helps or hurts web applicability with a training-mix experiment on fixed folds, and report email and web results separately.
 - Measure whether the web pool is large enough with a learning curve over web groups.
 - Treat the missing-audience policy as an input of each run, recorded and comparable across runs.
+- Offer multinomial logistic regression on the same features, folds, weighting, and metrics as a linear baseline beside LightGBM.
 
 ## Non-goals
 
@@ -137,10 +138,10 @@ Each pair yields one feature row:
 2. The pool is the `train` and `validation` splits, as the split v3.3 README specifies.
 3. Read the missing-audience policy from the pairs: rows either all carry `audience_policy=assume_all_students_without_audience` or all omit it. Stop on a mixture. Record the policy in the run record, so runs under each policy can be compared on the same folds.
 4. For each seed, `GroupKFold(n_splits=folds, shuffle=True, random_state=seed)` on `group_id` over the whole pool, email and web together. Record fold membership per group. Verify that no group crosses folds. Folds do not depend on `--train-sources` or the learning-curve fraction, so every training mix is scored on the same held-out events.
-5. In each fold, keep the training-fold pairs whose source is in `--train-sources` (default both). With `--learning-curve`, also keep a seeded random fraction of the training fold's web groups, with nested subsets so a larger fraction contains every smaller one. Fit `FeatureBuilder` on the kept pairs, train a multiclass `LGBMClassifier` with `random_state=seed`, and predict class probabilities for the whole held-out fold.
+5. In each fold, keep the training-fold pairs whose source is in `--train-sources` (default both). With `--learning-curve`, also keep a seeded random fraction of the training fold's web groups, with nested subsets so a larger fraction contains every smaller one. Fit `FeatureBuilder` on the kept pairs, train the selected model with `random_state=seed`, and predict class probabilities for the whole held-out fold. `--model lightgbm` (default) uses a multiclass `LGBMClassifier`. `--model logreg` uses multinomial `LogisticRegression` (`solver="lbfgs"`, default `C=1.0`, `max_iter=1000`) on the same feature matrix; a `MaxAbsScaler` fitted on the training fold scales the non-binary structured columns (`cue_*_count`, `n_audience`, `n_condition`, `audience_chars`, `cohort_distance`, `n_mentioned`, `n_required_unknown`), leaving binary and TF-IDF columns unchanged. Both models receive the same event or pair weights.
 6. Weighting defaults to `event`: each pair weighs 1/(number of profiles for its event), so the profile count does not dominate. `pair` weighting is available for comparison.
-7. Parameters come from a JSON file with recorded defaults. When a grid is given, selection uses mean out-of-fold macro-F1, and the record marks the score as a selection score, not a held-out estimate.
-8. `--fit-final` trains on the whole pool with the selected parameters. It saves the LightGBM text model and the TF-IDF vocabulary and IDF weights as JSON. No test data is scored.
+7. Parameters come from a JSON file with recorded defaults for the selected model; LightGBM and logistic regression keep separate defaults, and parameters belonging to the other model are rejected. When a grid is given, selection uses mean out-of-fold macro-F1, and the record marks the score as a selection score, not a held-out estimate.
+8. `--fit-final` trains on the whole pool with the selected parameters. It saves the LightGBM text model, or for logistic regression the coefficients, intercepts, class order, and scaler state as JSON (no pickle), plus the TF-IDF vocabulary and IDF weights as JSON. No test data is scored.
 
 A majority-class baseline is computed on the same folds as a sanity reference.
 
@@ -149,6 +150,7 @@ The planned comparisons, all on the same folds and seeds:
 - **Training mix**: web only, email only, and both, scored on held-out web events and on held-out email events. This complements the domain-transfer comparison in the evaluation protocol, which uses the reserved web set under issue #9.
 - **Learning curve**: web-only training at increasing web-group fractions, scored on held-out web events. A curve that still rises at the full pool indicates that more web collection (issue #15) would help; a flat curve does not show that the data are sufficient for unseen institutions.
 - **Ablations**: without TF-IDF, and without the source feature.
+- **Model family**: logistic regression versus LightGBM on identical features. The gap indicates how much the label rule's priority order (for example, CONDITION turning APPLIES into UNCLEAR while a conflict stays NOT_APPLIES) needs non-linear interactions. No interaction features are added for logistic regression alone, so the comparison stays fair.
 - **Missing-audience policy**: the same configuration on pairs built with and without the default.
 
 ### Metrics
@@ -159,7 +161,7 @@ For each seed and fold, and for the pooled out-of-fold predictions: three-way ma
 
 Each run writes a new directory, by default `reports/generated/applicability/<run_id>/`, and refuses to overwrite an existing one:
 
-- `record.json`: run ID and time, CLI configuration, seeds, folds, parameters, weighting, audience source, training sources, learning-curve fractions and their selected web groups, missing-audience policy, git commit and dirty flag, `uv.lock` SHA-256, SHA-256 of every input file and of the lexicon, the distinct `annotation_sha256` and `profile_set_sha256` values in the pairs, any `audience_policy`, Python/LightGBM/scikit-learn versions, platform, and per-fold document/event/pair/label counts;
+- `record.json`: run ID and time, model family, CLI configuration, seeds, folds, parameters, weighting, audience source, training sources, learning-curve fractions and their selected web groups, missing-audience policy, git commit and dirty flag, `uv.lock` SHA-256, SHA-256 of every input file and of the lexicon, the distinct `annotation_sha256` and `profile_set_sha256` values in the pairs, any `audience_policy`, Python/LightGBM/scikit-learn versions, platform, and per-fold document/event/pair/label counts;
 - `folds.jsonl`: seed, `group_id`, fold;
 - `oof_predictions.jsonl`: seed, fold, `doc_id`, `event_id`, `profile_id`, gold label, predicted label, class probabilities;
 - `metrics.json`;
@@ -204,5 +206,6 @@ Synthetic, hand-checkable inputs without network access:
 ## Decided by the user
 
 - Approach C with a GroupKFold harness; BamiBERT is out of scope.
+- Logistic regression is added as a second model family on the same features (2026-11-24).
 - Email stays in training as an experiment: training mixes, per-source reporting, and the source feature.
 - The missing-audience policy is an open input of each run.

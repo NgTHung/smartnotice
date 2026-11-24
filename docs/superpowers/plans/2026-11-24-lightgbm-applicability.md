@@ -119,3 +119,19 @@
 - [ ] Step 3: Implement; lazy import of the harness inside the command branch. Docs: interface.md "Train applicability features" section (allowlist, run files), README command, AGENTS owner row.
 - [ ] Step 4: `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv lock --check`, `uv run smartnotice demo`, `uv build` (wheel contains `smartnotice/modeling/`), `git diff --check`.
 - [ ] Step 5: Commit `feat: expose train-applicability command`.
+
+### Task 7: Logistic regression model family
+
+**Files:**
+- Modify: `src/modeling/applicability_training.py`, `src/cli.py`, `docs/interface.md`, `README.md`
+- Test: `tests/test_applicability_training.py`
+
+**Interfaces:**
+- Consumes: `FeatureBuilder.feature_names`, `TrainingConfig`, `_fit`/`_predict` call sites.
+- Produces: `TrainingConfig.model: Literal["lightgbm", "logreg"] = "lightgbm"`; CLI `--model {lightgbm,logreg}`; `SCALED_FEATURES: tuple[str, ...]` naming the non-binary structured columns (`cue_cohort_count`, `cue_degree_level_count`, `cue_major_count`, `cue_program_count`, `cue_status_count`, `cue_excluded_status_count`, `n_audience`, `n_condition`, `audience_chars`, `cohort_distance`, `n_mentioned`, `n_required_unknown`); record key `model`; metrics key `model`. Logistic regression defaults `{"C": 1.0, "max_iter": 1000, "solver": "lbfgs"}`; reserved `random_state`; LightGBM-only keys are rejected for `logreg` and logistic-regression-only keys (`C`, `penalty`, `solver`, `max_iter`, `l1_ratio`, `class_weight`, `tol`) for `lightgbm`.
+
+- [ ] Step 1: Tests `test_logreg_run_writes_complete_record` (record `model == "logreg"`; metrics, OOF probabilities summing to 1; same folds file as a LightGBM run on the same inputs and seed), `test_logreg_same_seed_same_predictions`, `test_logreg_scaler_fits_training_fold_only` (scaler maximum equals the training-fold maximum of a scaled column, not the held-out maximum), `test_logreg_rejects_lightgbm_params` (`num_leaves` → `ValueError`), `test_logreg_fit_final_writes_json_model` (`model.json` has `coef`, `intercept`, `classes`, `scaler`; no pickle file; `model.txt` absent), `test_logreg_missing_class_keeps_probability_columns`.
+- [ ] Step 2: Run; fail.
+- [ ] Step 3: Implement with a small model adapter so folds, weighting, metrics, OOF writing, and run record stay shared. Keep LightGBM behavior and file names unchanged. Gain importances apply to LightGBM; logistic regression writes per-class coefficients in `importances.json`.
+- [ ] Step 4: Pass; then the full verification list from Task 6.
+- [ ] Step 5: Commit `feat: add logistic regression applicability model`.
