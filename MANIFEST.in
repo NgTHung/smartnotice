@@ -1,5 +1,6 @@
 include .python-version uv.lock docs/WRITING_GUIDE.md AGENTS.md
-include config/privacy_rules.example.json
+include config/privacy_rules.example.json config/applicability_lexicon.json
+include tests/applicability_fixture.py
 recursive-include docs *.md *.pdf
 recursive-include tools *.py
 recursive-include notebooks *.ipynb

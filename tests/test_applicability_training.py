@@ -219,13 +219,73 @@ def test_run_writes_complete_record(tmp_path, paths):
     assert all(sum(row["probabilities"].values()) == pytest.approx(1.0) for row in predictions)
 
 
-def test_training_fold_with_missing_labels_keeps_fixed_probability_columns(tmp_path, corpus):
+@pytest.mark.parametrize("absent", ["NOT_APPLIES", "UNCLEAR"])
+def test_training_fold_with_missing_labels_keeps_fixed_probability_columns(
+    tmp_path, corpus, absent
+):
     *_, pairs, _ = corpus
-    for pair in pairs:
-        if pair["label"] == "UNCLEAR":
-            pair["label"] = "APPLIES"
+    pairs[:] = [pair for pair in pairs if pair["label"] != absent]
     paths = _input_paths(tmp_path, corpus)
     out = _run(_config(), paths, tmp_path / "absent")
     for row in read_jsonl(out / "oof_predictions.jsonl"):
         assert set(row["probabilities"]) == {"APPLIES", "NOT_APPLIES", "UNCLEAR"}
-        assert row["probabilities"]["UNCLEAR"] == 0.0
+        assert row["probabilities"][absent] == 0.0
+
+
+def test_cli_train_applicability(tmp_path, paths, capsys):
+    from smartnotice.cli import main
+
+    output = tmp_path / "cli-run"
+    params_file, grid_file = tmp_path / "params.json", tmp_path / "grid.json"
+    params_file.write_text('{"n_estimators": 3, "min_child_samples": 1}', encoding="utf-8")
+    grid_file.write_text('[{"num_leaves": 5}]', encoding="utf-8")
+    main(
+        [
+            "train-applicability",
+            "--pairs",
+            str(paths["pairs_path"]),
+            "--notices",
+            str(paths["notices_path"]),
+            "--assignments",
+            str(paths["assignments_path"]),
+            "--audience-source",
+            "human",
+            "--audience-annotations",
+            str(paths["annotations_path"]),
+            "--lexicon",
+            str(DEFAULT_LEXICON_PATH),
+            "--train-sources",
+            "web",
+            "--learning-curve",
+            "0.5",
+            "1.0",
+            "--allow-synthetic",
+            "--folds",
+            "3",
+            "--seeds",
+            "42",
+            "--no-tfidf",
+            "--no-source-feature",
+            "--weighting",
+            "pair",
+            "--params",
+            str(params_file),
+            "--param-grid",
+            str(grid_file),
+            "--fit-final",
+            "--output-dir",
+            str(output),
+        ]
+    )
+    assert capsys.readouterr().out.strip() == str(output)
+    record = _json(output / "record.json")
+    assert record["config"]["tfidf"] is False
+    assert record["config"]["source_feature"] is False
+    assert record["config"]["weighting"] == "pair"
+    assert record["train_sources"] == ["web"]
+    assert record["learning_curve"] == [0.5, 1.0]
+    assert record["params"]["n_estimators"] == 3
+    assert record["params"]["num_leaves"] == 5
+    assert record["inputs"]["params"]["sha256"] == sha256(params_file.read_bytes()).hexdigest()
+    assert record["inputs"]["param_grid"]["sha256"] == sha256(grid_file.read_bytes()).hexdigest()
+    assert _json(output / "tfidf.json") is None

@@ -86,3 +86,25 @@ Generated pairs retain `doc_id`, event/profile IDs, original evidence text, prof
 Source threads and manually assigned template groups merge with exact/near text duplicates. Similarity uses normalized character sequences with the threshold passed to `split`; transitive matches form one group. The seeded allocator targets 70/15/15 by document count but cannot guarantee exact proportions or nonempty small splits.
 
 Any group containing a reserved web notice is removed from the ordinary pool. Its web documents receive `domain_test`; related email receives `excluded`. Each assignment records its `seed` and `similarity`. Persist assignments and review group merges before training. Synthetic flags travel with every notice and derived pair.
+
+
+## Train applicability features
+
+`train-applicability` joins `build-pairs` rows to the reviewed split assignments by `doc_id`. Every pair must belong to `train` or `validation` and to a group without a held-out assignment. Synthetic rows require `--allow-synthetic`. All pair rows either omit `audience_policy` or record `assume_all_students_without_audience`. A mixture stops the run.
+
+`ApplicabilityInput` allows `doc_id`, `event_id`, `profile_id`, `event_text`, `audience_texts`, `condition_texts`, `reference_date`, `source_type`, `cohort`, `degree_level`, `major`, `program`, and `status`. IDs join records and stay out of the feature matrix. Reference date and source come from the prepared notice. In `human` and `predicted` modes, the supplied annotation must contain the matching event. Its linked AUDIENCE and CONDITION spans must resolve to the prepared text. In `none` mode both span lists are null and cue extraction uses `event_text`. Constraint fields, labels, reasons, policy flags, and annotation/profile-set hashes stay outside the model input. The structured features compare profile cohort, major, and program with recognized text cues and omit their raw profile values.
+
+GroupKFold assigns the whole pool to folds for each seed before source and learning-curve filters apply. The filters affect fold training only. A learning curve uses nested seeded samples of training-fold web groups, with the selected group count rounded up. TF-IDF learns word unigrams and bigrams from distinct training events in each fitted fold. The [draft lexicon](../config/applicability_lexicon.json) supplies the Vietnamese cue forms and requires team review.
+
+Each run creates a new directory under `reports/generated/applicability/<run_id>/` by default. `--output-dir` supplies an exact new directory path. The run contains the following files.
+
+| File | Contents |
+|---|---|
+| `record.json` | Run ID and time, configuration, selected parameters, Git and dependency provenance, input and lexicon hashes, annotation/profile-set hashes, audience policy, library versions, per-fold counts, and selected web groups |
+| `folds.jsonl` | Seed, group ID, and zero-based held-out fold, shared by all experiments in the run |
+| `oof_predictions.jsonl` | Experiment, seed, fold, pair IDs, gold silver label, predicted label, and probabilities keyed by class |
+| `metrics.json` | Fold and pooled out-of-fold scores per seed, means and population standard deviations across seeds, both weighting schemes, and a fold-trained majority baseline |
+| `feature_names.json`, `importances.json` | Ordered feature names and matching LightGBM gain values by experiment, seed, and fold, plus the final fit when requested |
+| `model.txt`, `tfidf.json` | With `--fit-final`, the model fitted on the entire train/validation pool and the final TF-IDF vocabulary and IDF weights. Disabled TF-IDF writes null. The run record gives the native model class order. |
+
+The label order is APPLIES, NOT_APPLIES, and UNCLEAR. Metrics record `label_origin=constraint_rule`. They include three-way macro-F1, per-class precision, recall and F1, confusion matrices, APPLIES recall, and denominators. Event weighting gives each pair the reciprocal of its event's profile count. Slices cover source, events whose silver label varies by profile, and selected rule reasons. Parameter-grid selection uses mean event-weighted out-of-fold macro-F1 on the first experiment. These scores measure agreement with the silver rules within the train/validation pool. The [evaluation protocol](evaluation.md) defines the reserved evaluations.

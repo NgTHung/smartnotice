@@ -690,13 +690,15 @@ def run_training(
     annotations_path: Path | None = None,
     lexicon_path: Path = DEFAULT_LEXICON_PATH,
     output_dir: Path | None = None,
+    config_inputs: dict[str, dict[str, str]] | None = None,
 ) -> Path:
     """Fit and score grouped folds, then return the newly created run directory.
 
     Input paths are UTF-8 JSONL except for the JSON lexicon. Provide annotations
     for human and predicted audience modes. The current checkout supplies Git
     and lockfile provenance. Raise ValueError for invalid joins, empty training
-    folds, or an existing output directory.
+    folds, or an existing output directory. config_inputs supplies path and
+    hash provenance for optional parameter files parsed by the caller.
     """
     started = datetime.now(UTC)
     config_values = config.model_dump(mode="json")
@@ -712,7 +714,10 @@ def run_training(
         pool, policy = load_pool(pairs, assignments, allow_synthetic=config.allow_synthetic)
         if not pool:
             raise ValueError("No train/validation pairs remain after synthetic filtering")
-        input_records = {"pairs": pairs_record, "assignments": assignments_record}
+        input_records = (config_inputs or {}) | {
+            "pairs": pairs_record,
+            "assignments": assignments_record,
+        }
         doc_ids = {row["doc_id"] for row in pool}
         notices, input_records["notices"] = _read_hashed_rows(
             notices_path, schema=Notice, doc_ids=doc_ids
