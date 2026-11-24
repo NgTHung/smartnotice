@@ -1,13 +1,18 @@
 """Build model inputs and comparison features for event/profile pairs."""
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from typing import Literal
 from unicodedata import normalize
 
+import numpy as np
 from pydantic import ValidationError
+from scipy import sparse
+from sklearn.feature_extraction.text import TfidfVectorizer
+from smartnotice.labeling.profiles import DEGREE_LEVELS, STATUSES
 from smartnotice.labeling.validation import validate_annotation
 from smartnotice.modeling.lexicon import Lexicon, fold_text
 from smartnotice.schemas import Annotation, DegreeLevel, Notice, Record, StudentStatus
@@ -287,3 +292,218 @@ def extract_audience_cues(item: ApplicabilityInput, lexicon: Lexicon) -> Audienc
         or cues.unrepresented
     )
     return cues
+
+
+def _comparison(mentioned: bool, known: bool, match: bool, conflict: bool) -> dict[str, float]:
+    return {
+        "mentioned": float(mentioned),
+        "profile_known": float(known),
+        "match": float(match),
+        "conflict": float(conflict),
+        "required_but_unknown": float(mentioned and not known),
+    }
+
+
+def _code_comparison(
+    values: set[str], actual: str | None, excluded: set[str] | None = None
+) -> dict[str, float]:
+    mentioned = bool(values or excluded)
+    known = actual is not None and bool(fold_text(actual))
+    match = (
+        known
+        and mentioned
+        and (not values or any(fold_text(actual) == fold_text(value) for value in values))
+        and actual not in (excluded or ())
+    )
+    return _comparison(mentioned, known, match, mentioned and known and not match)
+
+
+def cross_features(cues: AudienceCues, item: ApplicabilityInput) -> dict[str, float]:
+    """Compare each profile attribute with the recognized audience cues.
+
+    Cohort distance is in years to the closest cue or bound. Distance defaults
+    to zero when no comparison is possible. Known and mentioned flags identify
+    those cases, and unresolved study years never create a conflict by themselves.
+    """
+    year = item.cohort
+    lower, upper = cues.cohort_min, cues.cohort_max
+    endpoints = cues.cohorts | {bound for bound in (lower, upper) if bound is not None}
+    below = year is not None and lower is not None and year < lower
+    above = year is not None and upper is not None and year > upper
+    in_range = (
+        year is not None and (lower is not None or upper is not None) and not (below or above)
+    )
+    cohort_match = year in cues.cohorts or in_range
+    excluded_status = item.status in cues.excluded_statuses
+    comparisons = {
+        "cohort": _comparison(
+            bool(endpoints) or cues.cohort_unresolved,
+            year is not None,
+            cohort_match,
+            bool(endpoints) and year is not None and not cohort_match,
+        ),
+        "degree_level": _code_comparison(cues.degrees, item.degree_level),
+        "major": _code_comparison(cues.majors, item.major),
+        "program": _code_comparison(cues.programs, item.program),
+        "status": _code_comparison(cues.statuses, item.status, cues.excluded_statuses),
+    }
+    mentioned = sum(values["mentioned"] for values in comparisons.values())
+    matched = sum(values["match"] for values in comparisons.values())
+    features = {
+        f"{field}_{name}": value
+        for field, values in comparisons.items()
+        for name, value in values.items()
+    }
+    features.update(
+        cohort_in_range=float(in_range),
+        cohort_below_min=float(below),
+        cohort_above_max=float(above),
+        cohort_distance=float(
+            min((abs(year - endpoint) for endpoint in endpoints), default=0)
+            if year is not None
+            else 0
+        ),
+        excluded_status_hit=float(excluded_status),
+        any_conflict=float(any(values["conflict"] for values in comparisons.values())),
+        all_mentioned_match=float(mentioned > 0 and matched == mentioned),
+        n_mentioned=mentioned,
+        n_required_unknown=sum(values["required_but_unknown"] for values in comparisons.values()),
+    )
+    return features
+
+
+def _cue_features(cues: AudienceCues) -> dict[str, float]:
+    counts = {
+        "cohort": len(cues.cohorts)
+        + int(cues.cohort_min is not None)
+        + int(cues.cohort_max is not None),
+        "degree_level": len(cues.degrees),
+        "major": len(cues.majors),
+        "program": len(cues.programs),
+        "status": len(cues.statuses),
+        "excluded_status": len(cues.excluded_statuses),
+    }
+    features = {f"cue_{name}_count": float(count) for name, count in counts.items()}
+    features.update({f"cue_{name}_present": float(count > 0) for name, count in counts.items()})
+    features.update(
+        cohort_min_present=float(cues.cohort_min is not None),
+        cohort_max_present=float(cues.cohort_max is not None),
+        cohort_unresolved=float(cues.cohort_unresolved),
+        all_students=float(cues.all_students),
+        outside_population=float(cues.outside_population),
+        unrepresented=float(cues.unrepresented),
+        condition=float(cues.condition),
+        absent=float(cues.absent),
+        n_audience=float(cues.n_audience),
+        n_condition=float(cues.n_condition),
+        audience_chars=float(cues.audience_chars),
+    )
+    return features
+
+
+def _distinct_events(items: Sequence[ApplicabilityInput]) -> dict[tuple[str, str], str]:
+    texts: dict[tuple[str, str], str] = {}
+    for item in items:
+        key = (item.doc_id, item.event_id)
+        if texts.setdefault(key, item.event_text) != item.event_text:
+            raise ValueError(f"Inconsistent event text for document/event {key}")
+    return texts
+
+
+class FeatureBuilder:
+    """Build sparse cue, profile, comparison, and optional TF-IDF features."""
+
+    def __init__(
+        self, lexicon: Lexicon, *, tfidf: bool = True, source_feature: bool = True
+    ) -> None:
+        self._lexicon = lexicon
+        self._tfidf = tfidf
+        self._source_feature = source_feature
+        self._vectorizer: TfidfVectorizer | None = None
+        self.feature_names: list[str] = []
+        self._structured_size = 0
+
+    def _pair_features(self, item: ApplicabilityInput, cues: AudienceCues) -> dict[str, float]:
+        features = cross_features(cues, item)
+        features.update(
+            {
+                f"profile_degree_{value}": float(item.degree_level == value)
+                for value in DEGREE_LEVELS
+            }
+        )
+        features.update(
+            {f"profile_status_{value}": float(item.status == value) for value in STATUSES}
+        )
+        if self._source_feature:
+            features.update(
+                {f"source_type_{src}": float(item.source_type == src) for src in ("email", "web")}
+            )
+        return features
+
+    def fit(self, items: Sequence[ApplicabilityInput]) -> "FeatureBuilder":
+        """Fit the word vocabulary on distinct training events and return self.
+
+        Raise ValueError for an empty training set or inconsistent event texts.
+        When no term reaches the minimum frequency the TF-IDF block has width zero.
+        """
+        if not items:
+            raise ValueError("Feature fitting requires training pairs")
+        texts = list(_distinct_events(items).values())
+        self._vectorizer = None
+        cues = AudienceCues()
+        self.feature_names = list(_cue_features(cues)) + list(self._pair_features(items[0], cues))
+        self._structured_size = len(self.feature_names)
+        if self._tfidf and len(texts) >= 2:
+            vectorizer = TfidfVectorizer(
+                ngram_range=(1, 2), min_df=2, max_features=1000, dtype=np.float32
+            )
+            try:
+                vectorizer.fit(texts)
+            except ValueError as exc:
+                if not str(exc).startswith(("empty vocabulary", "After pruning, no terms remain")):
+                    raise
+            else:
+                self._vectorizer = vectorizer
+                self.feature_names.extend(
+                    f"tfidf:{term}" for term in vectorizer.get_feature_names_out()
+                )
+        return self
+
+    def transform(self, items: Sequence[ApplicabilityInput]) -> sparse.csr_matrix:
+        """Return one CSR row per item in fitted feature order."""
+        if not self.feature_names:
+            raise ValueError("Fit the feature builder before transforming pairs")
+        if not items:
+            return sparse.csr_matrix((0, len(self.feature_names)), dtype=np.float32)
+        texts = _distinct_events(items)
+        structured = np.empty((len(items), self._structured_size), dtype=np.float32)
+        cached = {}
+        for row, item in enumerate(items):
+            key = (item.doc_id, item.event_id)
+            if key not in cached:
+                cues = extract_audience_cues(item, self._lexicon)
+                cached[key] = (cues, tuple(_cue_features(cues).values()))
+            cues, event_features = cached[key]
+            structured[row] = (*event_features, *self._pair_features(item, cues).values())
+        matrix = sparse.csr_matrix(structured)
+        if self._vectorizer is None:
+            return matrix
+        event_rows = {key: row for row, key in enumerate(texts)}
+        tfidf = self._vectorizer.transform(texts.values())
+        pair_rows = [event_rows[item.doc_id, item.event_id] for item in items]
+        return sparse.hstack((matrix, tfidf[pair_rows]), format="csr")
+
+    def tfidf_state(self) -> dict | None:
+        """Return JSON-safe vocabulary and IDF weights, or None when disabled."""
+        if not self._tfidf:
+            return None
+        if not self.feature_names:
+            raise ValueError("Fit the feature builder before exporting TF-IDF")
+        if self._vectorizer is None:
+            return {"vocabulary": {}, "idf": []}
+        return {
+            "vocabulary": {
+                term: int(index) for term, index in self._vectorizer.vocabulary_.items()
+            },
+            "idf": self._vectorizer.idf_.tolist(),
+        }

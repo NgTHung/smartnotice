@@ -6,8 +6,11 @@ import pytest
 from applicability_fixture import make_corpus
 from pydantic import ValidationError
 from smartnotice.modeling.applicability_features import (
+    AudienceCues,
+    FeatureBuilder,
     admission_year_for_study_year,
     build_inputs,
+    cross_features,
     extract_audience_cues,
 )
 from smartnotice.modeling.lexicon import DEFAULT_LEXICON_PATH, Lexicon, load_lexicon
@@ -195,3 +198,90 @@ def test_span_mode_condition_uses_linked_condition_text(cue_item, lexicon):
     assert cues.n_audience == 1
     assert cues.audience_chars == len("sinh viên K24")
     assert not extract_audience_cues(cue_item, lexicon).condition
+
+
+def test_cohort_match_conflict_and_range(cue_item):
+    item = cue_item.model_copy(update={"cohort": 2023})
+    conflict = cross_features(AudienceCues(cohorts={2024}), item)
+    assert conflict["cohort_conflict"] == 1
+    assert conflict["cohort_distance"] == 1
+    match = cross_features(AudienceCues(cohorts={2023, 2024}), item)
+    assert match["cohort_match"] == 1
+    assert match["all_mentioned_match"] == 1
+    bounds = AudienceCues(cohort_min=2022, cohort_max=2024)
+    assert cross_features(bounds, item)["cohort_in_range"] == 1
+    assert cross_features(bounds, item.model_copy(update={"cohort": 2021}))["cohort_below_min"] == 1
+    assert cross_features(bounds, item.model_copy(update={"cohort": 2025}))["cohort_above_max"] == 1
+
+
+def test_missing_profile_marks_required_unknown(cue_item):
+    cues = AudienceCues(degrees={"master"}, majors={"CNTT"}, excluded_statuses={"on_leave"})
+    features = cross_features(cues, cue_item)
+    assert features["degree_level_required_but_unknown"] == 1
+    assert features["major_required_but_unknown"] == 1
+    assert features["status_required_but_unknown"] == 1
+    assert features["n_required_unknown"] == 3
+    assert features["any_conflict"] == features["all_mentioned_match"] == 0
+
+
+def test_excluded_status_hit(cue_item):
+    item = cue_item.model_copy(update={"status": "on_leave"})
+    features = cross_features(AudienceCues(excluded_statuses={"on_leave"}), item)
+    assert features["excluded_status_hit"] == 1
+    assert features["status_conflict"] == features["any_conflict"] == 1
+    assert features["status_match"] == 0
+
+
+def test_raw_profile_values_not_features(cue_item, lexicon):
+    first = cue_item.model_copy(update={"major": "FIRST", "program": "FIRST", "cohort": 2024})
+    second = cue_item.model_copy(update={"major": "OTHER", "program": "OTHER", "cohort": 2030})
+    builder = FeatureBuilder(lexicon, tfidf=False).fit([first, second])
+    assert all(
+        disallowed not in name
+        for name in builder.feature_names
+        for disallowed in ("CNTT", "FIRST", "OTHER", "2024", "rule_reason", "label_origin")
+    )
+    dense = builder.transform([first, second]).toarray()
+    allowed_differences = {
+        "cohort_match",
+        "cohort_conflict",
+        "cohort_distance",
+        "any_conflict",
+        "all_mentioned_match",
+    }
+    actual_differences = {
+        name for name, a, b in zip(builder.feature_names, dense[0], dense[1], strict=True) if a != b
+    }
+    assert actual_differences == allowed_differences
+
+
+def test_tfidf_fits_training_events_only(cue_item, lexicon):
+    first = cue_item.model_copy(update={"event_id": "a", "event_text": "đăng ký hiếm"})
+    duplicate = first.model_copy(update={"profile_id": "second-profile"})
+    second = cue_item.model_copy(update={"event_id": "b", "event_text": "đăng ký"})
+    held_out = cue_item.model_copy(update={"event_id": "c", "event_text": "đăng ký bí mật"})
+    builder = FeatureBuilder(lexicon).fit([first, duplicate, second])
+    matrix = builder.transform([held_out])
+    state = builder.tfidf_state()
+    assert set(state["vocabulary"]) == {"đăng", "ký", "đăng ký"}
+    assert state["idf"] == [1.0, 1.0, 1.0]
+    assert matrix.shape == (1, len(builder.feature_names))
+
+
+def test_tfidf_can_have_zero_terms_after_min_df(cue_item, lexicon):
+    builder = FeatureBuilder(lexicon).fit([cue_item])
+    assert builder.tfidf_state() == {"vocabulary": {}, "idf": []}
+    assert builder.transform([cue_item]).shape == (1, len(builder.feature_names))
+
+
+def test_source_feature_toggle(cue_item, lexicon):
+    with_source = FeatureBuilder(lexicon, tfidf=False).fit([cue_item])
+    without_source = FeatureBuilder(lexicon, tfidf=False, source_feature=False).fit([cue_item])
+    assert set(with_source.feature_names) - set(without_source.feature_names) == {
+        "source_type_email",
+        "source_type_web",
+    }
+    matrix = with_source.transform([cue_item])
+    assert matrix[0, with_source.feature_names.index("source_type_web")] == 1
+    assert matrix[0, with_source.feature_names.index("source_type_email")] == 0
+    assert without_source.tfidf_state() is None
