@@ -21,7 +21,7 @@ requires = ["setuptools>=80"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["smartnotice", "smartnotice.collectors", "smartnotice.parsers", "smartnotice.preprocessing", "smartnotice.labeling"]
+packages = ["smartnotice", "smartnotice.collectors", "smartnotice.parsers", "smartnotice.preprocessing", "smartnotice.labeling", "smartnotice.modeling"]
 package-dir = {smartnotice = "src"}
 
 [dependency-groups]
