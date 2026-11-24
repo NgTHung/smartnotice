@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 smartnotice = "smartnotice.cli:main"
+smartnotice-candidates = "smartnotice.labeling.candidate_cli:main"
 
 [build-system]
 requires = ["setuptools>=80"]
@@ -24,6 +25,11 @@ package-dir = {smartnotice = "src"}
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+ml = [
+    "numpy>=2.5.4",
+    "scikit-learn>=1.6,<2",
+    "scipy>=1.18.1",
+]
 notebooks = ["ipykernel>=6,<8", "jupyterlab>=4,<5", "matplotlib>=3.9,<4", "nbclient>=0.10,<1", "nbformat>=5.10,<6"]
 
 [tool.ruff]
