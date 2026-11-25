@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 smartnotice = "smartnotice.cli:main"
+smartnotice-candidates = "smartnotice.labeling.candidate_cli:main"
 
 [build-system]
 requires = ["setuptools>=80"]
