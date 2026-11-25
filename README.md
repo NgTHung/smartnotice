@@ -76,6 +76,18 @@ uv run smartnotice suggest-labels --notices data/interim/demo/notices.jsonl --do
 
 Run the demo first to prepare that fixture. The [LLM labeling procedure](docs/llm-labeling.md) explains `.env` configuration, batch selection, real-data approval, Label Studio review, and verified import with `import-reviewed-labels`.
 
+## Train span candidate filters
+
+Install the model dependency group with `uv sync --locked --group ml`. Use a frozen snapshot and a completed span review ledger from the [evaluation protocol](docs/evaluation.md#compare-span-candidate-filters). Train fits both Logistic Regression and Random Forest, selects thresholds on validation, and saves the checkpoint, prediction rows and metrics in a new output directory.
+
+```sh
+uv run --group ml smartnotice-candidates train --snapshot data/interim/frozen-snapshot --reviews data/annotations/span-reviews.jsonl --output reports/generated/candidate-run
+uv run --group ml smartnotice-candidates evaluate --models reports/generated/candidate-run/models.pkl --snapshot data/interim/frozen-snapshot --reviews data/annotations/span-reviews.jsonl --split test --output reports/generated/candidate-test
+uv run --group ml smartnotice-candidates predict --models reports/generated/candidate-run/models.pkl --notices data/interim/notices.jsonl --output reports/generated/candidate-predictions.jsonl
+```
+
+Evaluate the reserved web group with `--split domain_test`. Prediction returns offsets, proposed labels and decisions for both classifiers without annotations. Keep checkpoints and predictions private. Load only model files produced by a trusted local training run. For a software smoke test, generate an invented snapshot with `uv run python tools/create_candidate_demo.py reports/generated/candidate-fixture` and pass its `span-reviews.jsonl` and `--synthetic` to train.
+
 ## Find the files
 
 | Path | Purpose |

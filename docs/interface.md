@@ -46,6 +46,8 @@ A `SpanReview` records a human check of all six span labels for the document, in
 
 `build_candidate_targets` rejects stale input hashes, invalid offsets, duplicate candidate pairs, and mixed generator versions. With a matching review, `target=1` requires exact boundaries and the same label as the annotation. All other candidates receive `0`. Diagnostic precedence is `exact`, `wrong_label` at identical boundaries, `boundary` for a same-label overlap at different boundaries, `overlap_other_label`, then `no_overlap`. Without a supplied review, `target` is null and `match_status` is `unverified`. Target rows and annotation-derived fields stay outside model features.
 
+The candidate experiment writes private UTF-8 JSONL predictions. Training and evaluation rows extend the target record with `system`, `score`, `threshold`, and the binary `prediction`. Inference uses candidate keys and rule IDs in place of gold fields and reports both combined model decisions. Neither export stores span text. Resolve each row against its document ID, text hash, and half-open offsets. Use the report to identify the split, checkpoint and input file hashes.
+
 ## Describe an event
 
 Each annotation contains an anonymized annotator ID, spans, events, and reviewed audience constraints. Span labels are ACTION, TIME, AUDIENCE, CONDITION, CHANNEL, and DOCUMENT. Each event references one ACTION, its argument spans, and at least one evidence sentence. Shared arguments can belong to several events. All linked spans must fit inside selected evidence sentences.

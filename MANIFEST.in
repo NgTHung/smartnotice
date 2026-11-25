@@ -7,3 +7,4 @@ recursive-include data/raw/examples *.md *.eml *.html *.json *.jsonl
 recursive-include data/annotations/examples *.jsonl
 include data/annotations/README.md data/annotations/label_studio.xml
 recursive-include reports *.md
+prune reports/generated
