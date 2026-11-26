@@ -48,9 +48,30 @@ CRITERIA = {
     "cannot express (such as a class, role, or final year), or an eligibility condition "
     "cannot be checked from the profile.",
 }
-INSTRUCTIONS_SHA256 = json_sha256(
-    {"version": INSTRUCTIONS_VERSION, "task": TASK, "criteria": CRITERIA}
+TASK_V2 = (
+    "Decide whether this event from a Vietnamese university notice applies to the "
+    "student described by each question's student_profile. Use only this state and the "
+    "profile. label_definitions defines the three choices. admission_year is the year the "
+    "student was admitted: K24 or khóa 2024 means admission in 2024. reference_date is "
+    "the notice date. A null profile field is unknown."
 )
+# v1 repeats the task and label definitions in every question. v2 states them
+# once in the shared state and sends only the profile per question, which cuts
+# input tokens per profile. Results from different versions are separate runs.
+INSTRUCTION_VERSIONS = {
+    "v1": {
+        "name": INSTRUCTIONS_VERSION,
+        "sha256": json_sha256(
+            {"version": INSTRUCTIONS_VERSION, "task": TASK, "criteria": CRITERIA}
+        ),
+    },
+    "v2": {
+        "name": "applicability-reference-v2",
+        "sha256": json_sha256(
+            {"version": "applicability-reference-v2", "task": TASK_V2, "criteria": CRITERIA}
+        ),
+    },
+}
 _RETRY_STATUSES = {429, 500, 502, 503, 504, 529}
 
 
@@ -179,7 +200,7 @@ def _code_view(code: str | None, forms: dict[str, list[str]]) -> str | None:
 
 
 def build_request(
-    model: str, inputs: Sequence[ApplicabilityInput], lexicon: Lexicon
+    model: str, inputs: Sequence[ApplicabilityInput], lexicon: Lexicon, version: str = "v1"
 ) -> tuple[dict, dict[str, str]]:
     """Build one System One request and its question-name to profile-ID map.
 
@@ -187,12 +208,16 @@ def build_request(
     AUDIENCE and CONDITION span texts when the inputs carry them. Each profile
     becomes one choice question over ``LABELS``. Major and program codes are
     shown with their lexicon surface forms. Question names are neutral
-    (``q1``, ``q2``, ...) and never reveal profile IDs or labels.
+    (``q1``, ``q2``, ...) and never reveal profile IDs or labels. Version
+    ``v1`` puts the task and label definitions in every question; ``v2`` puts
+    them once in the state and leaves the choice descriptions empty.
 
     Raises:
-        ValueError: if the inputs are empty, cover more than one event, mix
-            audience modes, or repeat a profile.
+        ValueError: if the version is unknown, or the inputs are empty, cover
+            more than one event, mix audience modes, or repeat a profile.
     """
+    if version not in INSTRUCTION_VERSIONS:
+        raise ValueError(f"Unknown instruction version {version}")
     if not inputs or len({(i.doc_id, i.event_id) for i in inputs}) != 1:
         raise ValueError("A request must hold one event")
     first = inputs[0]
@@ -200,7 +225,8 @@ def build_request(
         raise ValueError("A request must use one audience mode")
     if len({i.profile_id for i in inputs}) != len(inputs):
         raise ValueError("A request must not repeat a profile")
-    state: dict = {
+    state: dict = {"task": TASK_V2, "label_definitions": dict(CRITERIA)} if version == "v2" else {}
+    state |= {
         "event_text": first.event_text,
         "reference_date": first.reference_date.isoformat() if first.reference_date else None,
         "source": first.source_type,
@@ -219,11 +245,18 @@ def build_request(
             "program": _code_view(item.program, lexicon.programs),
             "status": item.status,
         }
-        questions[name] = {
-            "type": "choice",
-            "instructions": {"task": TASK, "student_profile": profile},
-            "criteria": dict(CRITERIA),
-        }
+        if version == "v2":
+            questions[name] = {
+                "type": "choice",
+                "instructions": {"student_profile": profile},
+                "criteria": dict.fromkeys(LABELS),
+            }
+        else:
+            questions[name] = {
+                "type": "choice",
+                "instructions": {"task": TASK, "student_profile": profile},
+                "criteria": dict(CRITERIA),
+            }
     return {"model": model, "state": state, "questions": questions}, names
 
 

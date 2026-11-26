@@ -69,6 +69,25 @@ def test_request_sends_allowlisted_inputs_with_one_question_per_profile():
         )
 
 
+def test_v2_request_states_the_task_once_and_sends_only_profiles_per_question():
+    notices, annotations, pairs, _ = _corpus()
+    event_pairs = [p for p in pairs if p["doc_id"] == pairs[0]["doc_id"]]
+    lexicon, _ = load_lexicon(DEFAULT_LEXICON_PATH)
+    inputs = build_inputs(event_pairs, notices, annotations, "human")
+    v1, _ = build_request("d1.2-ultra", inputs, lexicon, version="v1")
+    v2, names = build_request("d1.2-ultra", inputs, lexicon, version="v2")
+    task = v1["questions"]["q1"]["instructions"]["task"]
+    assert json.dumps(v2, ensure_ascii=False).count(task[:40]) == 1
+    assert set(v2["state"]["label_definitions"]) == set(LABELS)
+    for question in v2["questions"].values():
+        assert set(question["instructions"]) == {"student_profile"}
+        assert question["criteria"] == dict.fromkeys(LABELS)
+    assert names == build_request("d1.2-ultra", inputs, lexicon)[1]
+    assert len(json.dumps(v2)) < len(json.dumps(v1))
+    with pytest.raises(ValueError, match="version"):
+        build_request("d1.2-ultra", inputs, lexicon, version="v9")
+
+
 def _answer(choice, probabilities):
     return {"type": "choice", "choice": choice, "confidence": 0.5, "probabilities": probabilities}
 

@@ -10,7 +10,8 @@ Subcommands, run from the repository root:
 derives silver labels with ``build_pairs`` (missing audiences stay UNCLEAR),
 and writes the stratified sample. ``run`` reads the API key from the provider's
 environment variable and sends one request per event and audience mode.
-``score`` writes per-provider metrics and cross-provider agreement. Outputs go
+``run --instructions`` selects the request version, and each provider and version
+writes to its own folder. ``score`` writes metrics per run and pairwise agreement. Outputs go
 to ``reports/generated/decision-reference-pilot/`` and contain identifiers,
 labels, answers, and hashes, never notice text. Results are vendor model
 predictions scored against rule-derived silver labels.
@@ -36,8 +37,7 @@ from smartnotice.labeling.pairs import build_pairs
 from smartnotice.labeling.profiles import generate_profiles
 from smartnotice.modeling.applicability_features import build_inputs
 from smartnotice.modeling.decision_reference import (
-    INSTRUCTIONS_SHA256,
-    INSTRUCTIONS_VERSION,
+    INSTRUCTION_VERSIONS,
     PROVIDERS,
     agreement,
     build_request,
@@ -167,7 +167,7 @@ def _jobs(args: argparse.Namespace, model: str) -> tuple[list[dict], dict]:
         for item in build_inputs(chosen, notices, annotations, mode):
             by_event[(item.doc_id, item.event_id)].append(item)
         for (doc_id, event_id), items in sorted(by_event.items()):
-            payload, questions = build_request(model, items, lexicon)
+            payload, questions = build_request(model, items, lexicon, args.instructions)
             for repeat in (0, 1) if (doc_id, event_id) in repeats else (0,):
                 meta = {"mode": mode, "doc_id": doc_id, "event_id": event_id, "repeat": repeat}
                 jobs.append(
@@ -187,7 +187,7 @@ def run(args: argparse.Namespace) -> None:
     if not key:
         raise ValueError(f"set {provider.key_env} to run {provider.name}")
     jobs, extra = _jobs(args, provider.model)
-    out = args.output_dir / provider.name
+    out = args.output_dir / provider.name / args.instructions
     started = datetime.now(UTC).isoformat()
     statuses = asyncio.run(
         run_requests(
@@ -205,8 +205,8 @@ def run(args: argparse.Namespace) -> None:
         {
             "provider": provider.model_dump(),
             "returned_models": sorted({str(r["model"]) for r in responses if r.get("model")}),
-            "instructions_version": INSTRUCTIONS_VERSION,
-            "instructions_sha256": INSTRUCTIONS_SHA256,
+            "instructions_version": INSTRUCTION_VERSIONS[args.instructions]["name"],
+            "instructions_sha256": INSTRUCTION_VERSIONS[args.instructions]["sha256"],
             "modes": args.modes,
             "jobs": len(jobs),
             "sent_statuses": dict(statuses),
@@ -226,21 +226,30 @@ def run(args: argparse.Namespace) -> None:
 def score(args: argparse.Namespace) -> None:
     rows = read_jsonl(args.output_dir / "sample.jsonl")
     results, responses = {}, {}
-    for name in args.providers:
-        path = args.output_dir / name / "responses.jsonl"
-        if path.exists():
-            responses[name] = read_jsonl(path)
-            results[name] = score_pilot(
-                responses[name],
-                rows,
-                seed=args.seed,
-                n_boot=args.n_boot,
-                input_usd_per_mtok=PROVIDERS[name].input_usd_per_mtok,
+    for path in sorted(args.output_dir.glob("*/*/responses.jsonl")):
+        provider, instructions = path.parent.parent.name, path.parent.name
+        if provider not in PROVIDERS or instructions not in INSTRUCTION_VERSIONS:
+            continue
+        name = f"{provider}/{instructions}"
+        responses[name] = read_jsonl(path)
+        results[name] = score_pilot(
+            responses[name],
+            rows,
+            seed=args.seed,
+            n_boot=args.n_boot,
+            input_usd_per_mtok=PROVIDERS[provider].input_usd_per_mtok,
+        )
+    names = sorted(responses)
+    results["agreement"] = {
+        f"{a} vs {b}": {
+            mode: agreement(responses[a], responses[b], mode)
+            for mode in sorted(
+                {r["mode"] for r in responses[a]} & {r["mode"] for r in responses[b]}
             )
-    if len(responses) == 2:
-        first, second = responses.values()
-        modes = {row["mode"] for row in first} & {row["mode"] for row in second}
-        results["agreement"] = {mode: agreement(first, second, mode) for mode in sorted(modes)}
+        }
+        for i, a in enumerate(names)
+        for b in names[i + 1 :]
+    }
     _write_json(args.output_dir / "scores.json", results)
     print(f"scored {', '.join(responses) or 'nothing'}: {args.output_dir / 'scores.json'}")
 
@@ -262,12 +271,11 @@ def main(argv: list[str] | None = None) -> None:
     runner = commands.choices["run"]
     runner.add_argument("--provider", choices=sorted(PROVIDERS), required=True)
     runner.add_argument("--modes", nargs="+", choices=["human", "none"], default=["none", "human"])
+    runner.add_argument("--instructions", choices=sorted(INSTRUCTION_VERSIONS), default="v1")
     runner.add_argument("--concurrency", type=int, default=8)
     runner.add_argument("--rate", type=float, default=20.0)
     runner.add_argument("--limit", type=int, help="send only the first N jobs (smoke test)")
-    scorer = commands.choices["score"]
-    scorer.add_argument("--providers", nargs="+", default=sorted(PROVIDERS))
-    scorer.add_argument("--n-boot", type=int, default=1000)
+    commands.choices["score"].add_argument("--n-boot", type=int, default=1000)
     args = parser.parse_args(argv)
     try:
         {"sample": sample, "run": run, "score": score}[args.command](args)
