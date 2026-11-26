@@ -7,7 +7,10 @@ Run from the repository root:
 The script reads the v3.1 curated snapshot, regenerates the seeded diagnostic
 profiles, derives silver event/profile labels with ``build_pairs``, and joins
 every document to the frozen split v3.1 of 2026-11-12 through
-``assignments.jsonl``. It checks that the split was built from the same
+``assignments.jsonl``. The stored profile set predates constraint
+deduplication in ``generate_profiles``; run the script at commit ``4f5b8b1``
+to reproduce it, because later code generates fewer profiles and the
+stored-set check fails. It checks that the split was built from the same
 snapshot hashes before counting anything. It writes counts to
 ``reports/generated/data-report/m5_stats_split_v3_1.json`` and saves the
 Spearman figure under ``reports/data-report/figures/``.
