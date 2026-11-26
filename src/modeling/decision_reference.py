@@ -73,6 +73,7 @@ INSTRUCTION_VERSIONS = {
     },
 }
 _RETRY_STATUSES = {429, 500, 502, 503, 504, 529}
+_STOP_STATUSES = {401, 402, 403}
 
 
 class Provider(Record):
@@ -193,6 +194,44 @@ def select_pilot(
     return sample
 
 
+def select_reference(
+    pairs: Sequence[dict],
+    annotations: Sequence[Annotation],
+    source_types: dict[str, str],
+    *,
+    profiles_per_event: int,
+    seed: int,
+) -> list[dict]:
+    """Keep every event with a seeded random subset of its profiles.
+
+    Unlike ``select_pilot``, selection ignores labels and constraints: each
+    event keeps ``profiles_per_event`` profiles (all when it has fewer), drawn
+    from its pairs in profile-ID order, so the subset depends only on the
+    events, profile IDs, and seed. ``hard_event`` is reported for analysis.
+    """
+    rng = Random(seed)
+    events: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for pair in pairs:
+        events[(pair["doc_id"], pair["event_id"])].append(pair)
+    hard = _hard_events(annotations)
+    sample = []
+    for key in sorted(events):
+        rows = sorted(events[key], key=lambda row: row["profile_id"])
+        kept = rng.sample(rows, min(len(rows), profiles_per_event))
+        for row in sorted(kept, key=lambda row: row["profile_id"]):
+            sample.append(
+                {
+                    "doc_id": row["doc_id"],
+                    "event_id": row["event_id"],
+                    "profile_id": row["profile_id"],
+                    "label": row["label"],
+                    "source_type": source_types[row["doc_id"]],
+                    "hard_event": key in hard,
+                }
+            )
+    return sample
+
+
 def _code_view(code: str | None, forms: dict[str, list[str]]) -> str | None:
     if code is None or code not in forms:
         return code
@@ -294,6 +333,14 @@ def parse_answers(body: dict, questions: dict[str, str]) -> dict[str, dict]:
     return parsed
 
 
+def _cost(usage: dict | None, provider: Provider) -> float:
+    if not isinstance(usage, dict):
+        return 0.0
+    if isinstance(usage.get("cost"), int | float):
+        return float(usage["cost"])
+    return usage.get("input_tokens", 0) / 1e6 * provider.input_usd_per_mtok
+
+
 def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
     header = response.headers.get("retry-after") if response is not None else None
     try:
@@ -314,20 +361,39 @@ async def run_requests(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     max_attempts: int = 5,
     timeout: float = 30.0,
+    max_usd: float | None = None,
 ) -> Counter[str]:
     """Send jobs within a request rate and append one record per finished job.
 
     Each job has ``request_id``, ``payload``, ``questions`` (name to profile
-    ID), and ``meta``. Jobs already recorded with status 200 are skipped, so an
-    interrupted run resumes. 429, 5xx, 529, and transport errors are retried
-    with ``Retry-After`` or exponential backoff up to ``max_attempts``. Other
-    statuses and invalid answers are recorded without retry. Records hold no
+    ID), and ``meta``. Records are flushed one by one, and jobs already recorded
+    with status 200 are skipped, so an interrupted or stopped run resumes where
+    it ended. A recorded job whose payload hash differs from the new payload
+    raises ValueError instead of mixing request versions. 429, 5xx, 529, and
+    transport errors are retried with ``Retry-After`` or exponential backoff up
+    to ``max_attempts``. Other statuses and invalid answers are recorded
+    without retry; 401, 402, and 403 also stop further sending, because every
+    later request would fail the same way.
+
+    ``max_usd`` caps spending across all runs recorded in ``output``: cost is
+    the response's ``usage.cost`` when present, otherwise input tokens times
+    the provider price. No job starts once the cap is reached; jobs already in
+    flight can exceed it by at most ``concurrency`` requests. Records hold no
     request text and no error bodies, which can echo the input. Returns status
-    counts for the jobs sent.
+    counts for the jobs sent, plus ``not_sent_budget`` and ``not_sent_stopped``.
     """
-    done = set()
-    if output.exists():
-        done = {row["request_id"] for row in read_jsonl(output) if row.get("status") == 200}
+    previous = read_jsonl(output) if output.exists() else []
+    done = {
+        row["request_id"]: row["payload_sha256"] for row in previous if row.get("status") == 200
+    }
+    for job in jobs:
+        recorded = done.get(job["request_id"])
+        if recorded is not None and recorded != json_sha256(job["payload"]):
+            raise ValueError(
+                f"{job['request_id']}: recorded payload differs; use a new output folder"
+            )
+    spent = [sum(_cost(row.get("usage"), provider) for row in previous)]
+    stopped = [False]
     output.parent.mkdir(parents=True, exist_ok=True)
     gate, write_lock, pace_lock = asyncio.Semaphore(concurrency), asyncio.Lock(), asyncio.Lock()
     next_slot = [time.monotonic()]
@@ -342,6 +408,12 @@ async def run_requests(
 
     async def send(client: httpx.AsyncClient, job: dict, handle) -> None:
         async with gate:
+            if stopped[0]:
+                statuses["not_sent_stopped"] += 1
+                return
+            if max_usd is not None and spent[0] >= max_usd:
+                statuses["not_sent_budget"] += 1
+                return
             record = {
                 "request_id": job["request_id"],
                 "provider": provider.name,
@@ -379,6 +451,8 @@ async def run_requests(
                     record["status"], record["error"] = "invalid_response", str(exc)
             elif record["status"] is not None:
                 record["error"] = f"http_{record['status']}"
+                stopped[0] = stopped[0] or record["status"] in _STOP_STATUSES
+            spent[0] += _cost(record["usage"], provider)
             record["finished_at"] = datetime.now(UTC).isoformat()
             statuses[str(record["status"])] += 1
             async with write_lock:

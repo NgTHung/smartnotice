@@ -8,11 +8,17 @@ Subcommands, run from the repository root:
 
 ``sample`` designs deduplicated profiles from train/validation constraints,
 derives silver labels with ``build_pairs`` (missing audiences stay UNCLEAR),
-and writes the stratified sample. ``run`` reads the API key from the provider's
-environment variable and sends one request per event and audience mode.
-``run --instructions`` selects the request version, and each provider and version
-writes to its own folder. ``score`` writes metrics per run and pairwise agreement. Outputs go
-to ``reports/generated/decision-reference-pilot/`` and contain identifiers,
+and writes the sample: ``--design pilot`` stratifies events and labels, and
+``--design reference`` keeps every event with seeded random profiles.
+
+``run`` reads the API key from the provider's environment variable and sends
+one request per event and audience mode. ``--instructions`` selects the request
+version, and each provider and version writes to its own folder. A rerun skips
+answered requests, so a stopped run resumes; ``--max-usd`` caps spending across
+runs. ``score`` writes metrics per run and pairwise agreement.
+
+Outputs go to ``--output-dir`` (default
+``reports/generated/decision-reference-pilot/``) and contain identifiers,
 labels, answers, and hashes, never notice text. Results are vendor model
 predictions scored against rule-derived silver labels.
 """
@@ -44,6 +50,7 @@ from smartnotice.modeling.decision_reference import (
     run_requests,
     score_pilot,
     select_pilot,
+    select_reference,
 )
 from smartnotice.modeling.lexicon import DEFAULT_LEXICON_PATH, load_lexicon
 from smartnotice.preprocessing.split import DEFAULT_SEED
@@ -51,6 +58,11 @@ from smartnotice.schemas import Annotation, Notice, Profile
 
 DEFAULT_OUTPUT = Path("reports/generated/decision-reference-pilot")
 POOL = ("train", "validation")
+NOTES = {
+    "pilot": "Label-stratified sample; label mix is not a corpus estimate.",
+    "reference": "Every train/validation event with seeded random profiles; "
+    "labels and constraints do not steer selection.",
+}
 
 
 def _file_sha256(path: Path) -> str:
@@ -95,21 +107,29 @@ def sample(args: argparse.Namespace) -> None:
     profiles = generate_profiles(constraints, args.seed)
     pairs = build_pairs(notices, annotations, profiles)
     sources = {notice.doc_id: notice.source_type for notice in notices}
-    rows = select_pilot(
-        pairs,
-        annotations,
-        sources,
-        quotas={"web": args.web, "email": args.email},
-        profiles_per_event=args.profiles_per_event,
-        seed=args.seed,
-        max_events_per_doc=args.max_events_per_doc,
-    )
+    if args.design == "reference":
+        rows = select_reference(
+            pairs, annotations, sources, profiles_per_event=args.profiles_per_event, seed=args.seed
+        )
+    else:
+        rows = select_pilot(
+            pairs,
+            annotations,
+            sources,
+            quotas={"web": args.web, "email": args.email},
+            profiles_per_event=args.profiles_per_event,
+            seed=args.seed,
+            max_events_per_doc=args.max_events_per_doc,
+        )
     for row in rows:
         row |= {k: assignments[row["doc_id"]][k] for k in ("group_id", "split")}
     events = sorted({(row["doc_id"], row["event_id"]) for row in rows})
     repeats = sorted(Random(args.seed).sample(events, min(args.repeat_events, len(events))))
+    existing = args.output_dir / "sample.jsonl"
+    if any(args.output_dir.glob("*/*/responses.jsonl")) and read_jsonl(existing) != rows:
+        raise ValueError(f"{args.output_dir} has responses for a different sample")
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    write_jsonl(args.output_dir / "sample.jsonl", rows)
+    write_jsonl(existing, rows)
     write_jsonl(args.output_dir / "profiles.jsonl", [p.model_dump(mode="json") for p in profiles])
     labels = Counter((row["source_type"], row["label"]) for row in rows)
     _write_json(
@@ -119,9 +139,10 @@ def sample(args: argparse.Namespace) -> None:
             "split_dir": args.split_dir.as_posix(),
             "inputs_sha256": hashes,
             "seed": args.seed,
-            "quotas": {"web": args.web, "email": args.email},
+            "design": args.design,
+            "quotas": {"web": args.web, "email": args.email} if args.design == "pilot" else None,
             "profiles_per_event": args.profiles_per_event,
-            "max_events_per_doc": args.max_events_per_doc,
+            "max_events_per_doc": args.max_events_per_doc if args.design == "pilot" else None,
             "audience_policy": "missing audiences stay UNCLEAR",
             "profile_count": len(profiles),
             "profile_set_sha256": json_sha256([p.model_dump(mode="json") for p in profiles]),
@@ -132,7 +153,7 @@ def sample(args: argparse.Namespace) -> None:
                 f"{s}/{label}": n for (s, label), n in sorted(labels.items())
             },
             "repeat_events": [list(key) for key in repeats],
-            "note": "Label-stratified sample; label mix is not a corpus estimate.",
+            "note": NOTES[args.design],
             **_git(),
         },
     )
@@ -197,6 +218,7 @@ def run(args: argparse.Namespace) -> None:
             out / "responses.jsonl",
             concurrency=args.concurrency,
             rate=args.rate,
+            max_usd=args.max_usd,
         )
     )
     responses = read_jsonl(out / "responses.jsonl")
@@ -212,6 +234,7 @@ def run(args: argparse.Namespace) -> None:
             "sent_statuses": dict(statuses),
             "concurrency": args.concurrency,
             "rate_per_second": args.rate,
+            "max_usd": args.max_usd,
             "started_at": started,
             "finished_at": datetime.now(UTC).isoformat(),
             "python": platform.python_version(),
@@ -263,6 +286,9 @@ def main(argv: list[str] | None = None) -> None:
         command.add_argument("--seed", type=int, default=DEFAULT_SEED)
         if name in {"sample", "run"}:
             command.add_argument("--split-dir", type=Path, required=True)
+    commands.choices["sample"].add_argument(
+        "--design", choices=["pilot", "reference"], default="pilot"
+    )
     commands.choices["sample"].add_argument("--web", type=int, default=150)
     commands.choices["sample"].add_argument("--email", type=int, default=50)
     commands.choices["sample"].add_argument("--profiles-per-event", type=int, default=5)
@@ -275,6 +301,7 @@ def main(argv: list[str] | None = None) -> None:
     runner.add_argument("--concurrency", type=int, default=8)
     runner.add_argument("--rate", type=float, default=20.0)
     runner.add_argument("--limit", type=int, help="send only the first N jobs (smoke test)")
+    runner.add_argument("--max-usd", type=float, help="stop starting jobs once this is spent")
     commands.choices["score"].add_argument("--n-boot", type=int, default=1000)
     args = parser.parse_args(argv)
     try:

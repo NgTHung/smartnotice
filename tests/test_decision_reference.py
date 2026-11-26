@@ -15,6 +15,7 @@ from smartnotice.modeling.decision_reference import (
     run_requests,
     score_pilot,
     select_pilot,
+    select_reference,
 )
 from smartnotice.modeling.lexicon import DEFAULT_LEXICON_PATH, load_lexicon
 
@@ -214,3 +215,70 @@ def test_pilot_scores_report_denominators_calibration_and_consistency():
         "max_abs_prob_diff": 0.0,
     }
     assert agreement(rows, rows, "human") == {"pairs": 3, "same_choice": 1.0}
+
+
+def test_reference_sample_keeps_every_event_and_ignores_labels():
+    _, annotations, pairs, sources = _corpus()
+    sample = select_reference(pairs, annotations, sources, profiles_per_event=2, seed=3)
+    relabelled = [p | {"label": "UNCLEAR"} for p in pairs]
+    keys = [(r["doc_id"], r["event_id"], r["profile_id"]) for r in sample]
+    again = select_reference(relabelled, annotations, sources, profiles_per_event=2, seed=3)
+    assert keys == [(r["doc_id"], r["event_id"], r["profile_id"]) for r in again]
+    assert len({(doc, event) for doc, event, _ in keys}) == len(
+        {(p["doc_id"], p["event_id"]) for p in pairs}
+    )
+    assert len(keys) == len(set(keys)) == 2 * len({(doc, event) for doc, event, _ in keys})
+
+
+def _job(number):
+    return {
+        "request_id": f"none:d{number}:e1:0",
+        "payload": {"model": "m", "state": {"n": number}, "questions": {}},
+        "questions": {"q1": "p1"},
+        "meta": {"mode": "none", "doc_id": f"d{number}", "event_id": "e1", "repeat": 0},
+    }
+
+
+async def _no_sleep(_):
+    return None
+
+
+def _ok(_request):
+    answers = {"q1": _answer("UNCLEAR", {"APPLIES": 0.1, "NOT_APPLIES": 0.1, "UNCLEAR": 0.8})}
+    return httpx.Response(200, json={"model": "m", "answers": answers, "usage": {"cost": 0.6}})
+
+
+def _run(jobs, output, handler, **options):
+    return asyncio.run(
+        run_requests(
+            jobs,
+            PROVIDERS["d1.2-ultra"],
+            "key",
+            output,
+            concurrency=1,
+            rate=100,
+            transport=httpx.MockTransport(handler),
+            sleep=_no_sleep,
+            **options,
+        )
+    )
+
+
+def test_runner_stops_at_the_budget_including_earlier_runs(tmp_path):
+    output = tmp_path / "responses.jsonl"
+    jobs = [_job(n) for n in range(5)]
+    statuses = _run(jobs, output, _ok, max_usd=1.0)
+    assert statuses["200"] == 2 and statuses["not_sent_budget"] == 3
+    statuses = _run(jobs, output, _ok, max_usd=1.1)
+    assert statuses["200"] == 0 and len(read_jsonl(output)) == 2
+
+
+def test_runner_stops_on_credit_errors_and_rejects_changed_payloads(tmp_path):
+    output = tmp_path / "responses.jsonl"
+    jobs = [_job(n) for n in range(4)]
+    statuses = _run(jobs, output, lambda _: httpx.Response(402, json={"error": {}}))
+    assert statuses["402"] == 1 and statuses["not_sent_stopped"] == 3
+    _run(jobs[:1], output, _ok)
+    changed = [jobs[0] | {"payload": {**jobs[0]["payload"], "state": {"n": 99}}}]
+    with pytest.raises(ValueError, match="payload"):
+        _run(changed, output, _ok)
