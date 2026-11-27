@@ -105,6 +105,8 @@ Use one adjudicated annotation per document. `generate-profiles` designs synthet
 
 ## Measure annotation quality
 
+For span candidate research, inspect the full privacy-cleared notice for missing spans across all six labels, as well as for incorrect boundaries and labels. Apply the event and argument scope used by this protocol. Finalize any edits before calculating the annotation digest. Record one private `SpanReview` JSONL row per completed document with the fields in the [data contract](interface.md#validate-candidate-targets). Leave incomplete documents out of the review file. For independent evaluation, preserve the separate exports and adjudication decisions for the held-out documents.
+
 Measure pilot time per document, span counts, rare argument types, relation distances, and agreement before expanding collection. `annotation_summary`, `span_f1`, and `cohens_kappa` in [`analysis.py`](../src/labeling/analysis.py) provide counts, exact typed-span F1, and kappa on aligned categorical decisions.
 
 Use exact span offsets and types for span F1. Define the same candidate event/profile pairs for both annotators before calculating applicability kappa. Do not compute kappa over unmatched free-form spans or treat overlapping spans as aligned decisions. Report sample sizes, annotator pairing, adjudication rules, and both disagreements and agreements. The synthetic demo contains no human agreement measurements.
