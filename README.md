@@ -76,6 +76,18 @@ uv run smartnotice suggest-labels --notices data/interim/demo/notices.jsonl --do
 
 Run the demo first to prepare that fixture. The [LLM labeling procedure](docs/llm-labeling.md) explains `.env` configuration, batch selection, real-data approval, Label Studio review, and verified import with `import-reviewed-labels`.
 
+## Train the applicability model
+
+Run grouped cross-validation with pairs from the train and validation splits.
+
+```powershell
+uv run smartnotice train-applicability --pairs path/to/train-validation-pairs.jsonl --notices path/to/notices.jsonl --assignments path/to/assignments.jsonl --audience-source human --audience-annotations path/to/events.jsonl
+```
+
+LightGBM is the default. Add `--model logreg` to run multinomial logistic regression on the same features and folds. `--fit-final` saves `model.txt` for LightGBM or `model.json` for logistic regression.
+
+Use the prepared notices and reviewed assignments for the pair snapshot. Use `--audience-source predicted` with aligned predicted annotations or `--audience-source none` for event text alone. Compare source mixes with `--train-sources`, sample nested web groups with `--learning-curve`, and toggle the feature blocks with `--no-tfidf` and `--no-source-feature`. The [data contract](docs/interface.md#train-applicability-features) defines the saved artifacts and how to read their silver-label scores.
+
 ## Find the files
 
 | Path | Purpose |
@@ -88,6 +100,7 @@ Run the demo first to prepare that fixture. The [LLM labeling procedure](docs/ll
 | `src/parsers/` | MIME body extraction and HTML table conversion |
 | `src/preprocessing/` | Privacy filtering, segmentation, date helpers, and grouped splitting |
 | `src/labeling/` | Annotation validation, Label Studio exchange, and audience rules |
+| `src/modeling/` | Applicability features and grouped model training |
 | `notebooks/01_data_quality.ipynb` | Missing dates, privacy review, duplicates, and split checks |
 | `notebooks/02_eda.ipynb` | Email/web lengths, sentence counts, and date expressions |
 | `notebooks/03_label_analysis.ipynb` | Span/role balance, argument distance, and applicability labels |

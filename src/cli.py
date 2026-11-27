@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 import httpx
@@ -123,6 +124,30 @@ def main(argv: list[str] | None = None) -> None:
         "--output", type=Path, default=Path("data/processed/profiles.jsonl")
     )
     profile_parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    train = commands.add_parser(
+        "train-applicability", help="Train and score models on grouped applicability pairs"
+    )
+    train.add_argument("--model", choices=["lightgbm", "logreg"], default="lightgbm")
+    train.add_argument("--pairs", type=Path, required=True)
+    train.add_argument("--notices", type=Path, required=True)
+    train.add_argument("--assignments", type=Path, required=True)
+    train.add_argument("--audience-source", choices=["human", "predicted", "none"], required=True)
+    train.add_argument("--audience-annotations", type=Path)
+    train.add_argument("--train-sources", nargs="+", choices=["email", "web"])
+    train.add_argument("--learning-curve", nargs="+", type=float, metavar="FRACTION")
+    train.add_argument("--seeds", nargs="+", type=int, metavar="SEED")
+    train.add_argument("--folds", type=int)
+    train.add_argument("--tfidf", action=argparse.BooleanOptionalAction, default=True)
+    train.add_argument("--no-source-feature", dest="source_feature", action="store_false")
+    train.add_argument(
+        "--params", type=Path, help="JSON object of parameters for the selected model"
+    )
+    train.add_argument("--param-grid", type=Path, help="JSON list of parameter override objects")
+    train.add_argument("--weighting", choices=["event", "pair"], default="event")
+    train.add_argument("--fit-final", action="store_true")
+    train.add_argument("--output-dir", type=Path, help="New run directory")
+    train.add_argument("--lexicon", type=Path, help="Override config/applicability_lexicon.json")
+    train.add_argument("--allow-synthetic", action="store_true")
     for name in [
         "split",
         "quality",
@@ -288,6 +313,51 @@ def main(argv: list[str] | None = None) -> None:
             print(
                 f"Imported {len(annotations)} reviewed annotations; logged {len(reviews)} decisions"
             )
+        elif args.command == "train-applicability":
+            if args.output_dir is not None and args.output_dir.exists():
+                raise ValueError(f"Applicability run directory already exists: {args.output_dir}")
+            from smartnotice.modeling.applicability_training import TrainingConfig, run_training
+            from smartnotice.modeling.lexicon import DEFAULT_LEXICON_PATH
+
+            option_names = (
+                "model",
+                "audience_source",
+                "train_sources",
+                "learning_curve",
+                "seeds",
+                "folds",
+                "tfidf",
+                "source_feature",
+                "weighting",
+                "fit_final",
+                "allow_synthetic",
+            )
+            options = {
+                name: getattr(args, name)
+                for name in option_names
+                if getattr(args, name) is not None
+            }
+            config_inputs = {}
+            for name in ("params", "param_grid"):
+                if path := getattr(args, name):
+                    content = path.read_bytes()
+                    try:
+                        options[name] = json.loads(content.decode("utf-8-sig"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        raise ValueError(f"{path}: expected valid UTF-8 JSON") from None
+                    config_inputs[name] = {"path": str(path), "sha256": sha256(content).hexdigest()}
+            config = TrainingConfig.model_validate(options)
+            output = run_training(
+                config,
+                pairs_path=args.pairs,
+                notices_path=args.notices,
+                assignments_path=args.assignments,
+                annotations_path=args.audience_annotations,
+                lexicon_path=args.lexicon or DEFAULT_LEXICON_PATH,
+                output_dir=args.output_dir,
+                config_inputs=config_inputs,
+            )
+            print(output)
         elif args.command == "generate-profiles":
             annotations = _load(args.annotations, Annotation)
             constraints = [c for a in annotations for c in a.audience_constraints]

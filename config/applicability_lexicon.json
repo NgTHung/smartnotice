@@ -1,0 +1,38 @@
+{
+  "version": "draft-2026-11-24",
+  "majors": {
+    "CNTT": ["cntt", "công nghệ thông tin"],
+    "HOA_HOC": ["hóa học", "hoá học"],
+    "KTMT": ["ktmt", "kỹ thuật máy tính", "kĩ thuật máy tính"],
+    "TTNT": ["ttnt", "trí tuệ nhân tạo"],
+    "TCNH": ["tcnh", "tài chính ngân hàng", "tài chính - ngân hàng"]
+  },
+  "programs": {
+    "TCTA": ["tcta", "tăng cường tiếng anh"],
+    "CLC": ["clc", "chất lượng cao"],
+    "VIET_PHAP": ["việt pháp", "việt-pháp"],
+    "TIEN_TIEN": ["tiên tiến"],
+    "DAI_TRA": ["đại trà"],
+    "DE_AN": ["chương trình đề án", "hệ đề án"],
+    "CHUAN": ["chương trình chuẩn", "hệ chuẩn"]
+  },
+  "degrees": {
+    "undergraduate": ["bậc đại học", "trình độ đại học"],
+    "master": ["thạc sĩ", "cao học"],
+    "doctoral": ["tiến sĩ", "nghiên cứu sinh"],
+    "graduate": ["sau đại học"]
+  },
+  "statuses": {
+    "active": ["đang học", "đang theo học"],
+    "on_leave": ["bảo lưu"],
+    "suspended": ["đình chỉ", "buộc thôi học"],
+    "defended": ["đã bảo vệ"],
+    "graduated": ["đã tốt nghiệp"]
+  },
+  "exclusion": ["trừ", "ngoại trừ", "không bao gồm", "không áp dụng"],
+  "all_students": ["toàn thể", "tất cả sinh viên", "mọi sinh viên", "tất cả người học"],
+  "outside_population": ["cán bộ", "giảng viên", "nhân viên", "phụ huynh"],
+  "student_terms": ["sinh viên", "học viên", "người học", "nghiên cứu sinh"],
+  "unrepresented": ["lớp trưởng", "ban cán sự", "hệ chính quy", "năm cuối"],
+  "condition": ["điều kiện", "yêu cầu", "chứng chỉ", "điểm trung bình", "hoàn cảnh", "gpa"]
+}

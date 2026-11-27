@@ -59,6 +59,7 @@ The installed package is `smartnotice`, mapped directly to `src/` by setuptools.
 | `src/parsers/` | MIME and HTML body extraction |
 | `src/preprocessing/` | Normalization, privacy filtering, dates, segmentation, and grouping |
 | `src/labeling/` | Annotation validation, Label Studio exchange, audience rules, and agreement helpers |
+| `src/modeling/` | Applicability features, grouped LightGBM training, and run records |
 | `notebooks/` | Analysis and presentation using package functions |
 | `tools/` | Repeatable fixture and notebook utilities |
 
