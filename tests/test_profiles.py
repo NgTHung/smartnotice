@@ -59,6 +59,15 @@ def test_profile_generation_repeats_for_one_seed():
     assert first == generate_profiles([LISTED, BOUNDED, EVERYONE], seed=11)
 
 
+def test_repeated_constraints_add_no_profiles():
+    copies = [
+        constraint.model_copy(update={"audience_span_id": f"{constraint.audience_span_id}-copy"})
+        for constraint in [EVERYONE, LISTED, EVERYONE]
+    ]
+    distinct = generate_profiles([LISTED, BOUNDED, EVERYONE], seed=7)
+    assert generate_profiles([LISTED, BOUNDED, EVERYONE, *copies], seed=7) == distinct
+
+
 def test_profile_generation_requires_a_resolvable_constraint():
     with pytest.raises(ValueError, match="constraint"):
         generate_profiles([IMPLICIT], seed=7)

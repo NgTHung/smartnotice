@@ -11,6 +11,10 @@ population policy on and off, and writes ``summary.json``,
 ``reports/generated/data-report/web-applicability/``. Outputs contain aggregate
 counts and safe IDs, never notice text. Labels are rule-derived diagnostics,
 not human correctness judgments or estimates of real prevalence.
+
+The 722-profile count predates constraint deduplication in
+``generate_profiles``. Run the script at commit ``4f5b8b1`` to reproduce the
+reported figures; later code generates fewer profiles.
 """
 
 import hashlib

@@ -71,17 +71,25 @@ def _variants(
 def generate_profiles(constraints: list[AudienceConstraint], seed: int) -> list[Profile]:
     """Design a deduplicated synthetic profile set for the given constraints.
 
-    For each ``listed`` or ``all_students`` constraint, the set contains a
-    matching profile and, per requirement, a known mismatch where the observed
+    For each distinct ``listed`` or ``all_students`` constraint, the set contains
+    a matching profile and, per requirement, a known mismatch where the observed
     values allow one and a profile missing that attribute. Each excluded status
-    adds an excluded profile. ``implicit`` and ``outside_population`` constraints
-    do not depend on profile values and add none. The same constraints and seed
-    return the same profiles with IDs ``p0001``, ``p0002``, and so on.
+    adds an excluded profile. Constraints that differ only in
+    ``audience_span_id`` count once, in order of first appearance, so the set
+    size follows constraint variety rather than how often a constraint recurs.
+    ``implicit`` and ``outside_population`` constraints do not depend on profile
+    values and add none. The same constraints and seed return the same profiles
+    with IDs ``p0001``, ``p0002``, and so on.
 
     Raises:
         ValueError: if no constraint has scope ``listed`` or ``all_students``.
     """
-    resolvable = [c for c in constraints if c.scope in {"listed", "all_students"}]
+    distinct = {
+        c.model_dump_json(exclude={"audience_span_id"}): c
+        for c in constraints
+        if c.scope in {"listed", "all_students"}
+    }
+    resolvable = list(distinct.values())
     if not resolvable:
         raise ValueError("Profile generation needs a listed or all_students constraint")
     rng = random.Random(seed)
